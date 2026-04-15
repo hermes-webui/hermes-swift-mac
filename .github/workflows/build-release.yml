@@ -14,14 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build release binary
-        run: swift build -c release
+      - name: Build universal binary (arm64 + x86_64)
+        run: |
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          mkdir -p .build/universal
+          lipo -create \
+            .build/arm64-apple-macosx/release/HermesAgent \
+            .build/x86_64-apple-macosx/release/HermesAgent \
+            -output .build/universal/HermesAgent
 
       - name: Create app bundle
         run: |
           APP_NAME="HermesAgent"
           DISPLAY_NAME="Hermes Agent"
-          BUILD_DIR=".build/release"
+          BUILD_DIR=".build/universal"
           APP_BUNDLE="$DISPLAY_NAME.app"
 
           mkdir -p "$APP_BUNDLE/Contents/MacOS"
