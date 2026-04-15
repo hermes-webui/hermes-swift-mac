@@ -2,6 +2,8 @@
 
 A native macOS desktop app for [Hermes Web UI](https://github.com/nesquena/hermes-webui). Built with Swift and WKWebView — no Electron, no dependencies beyond Xcode Command Line Tools. Created by [@redsparklabs](https://github.com/redsparklabs)
 
+<img width="1309" height="890" alt="desktop" src="https://github.com/user-attachments/assets/7b91eb7b-e11e-4809-8e7f-9bbff64990f9" />
+
 ## Install
 
 ### Option 1: Download the DMG (easiest)
