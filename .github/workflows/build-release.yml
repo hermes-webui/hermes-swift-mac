@@ -1,0 +1,112 @@
+name: Build and Release macOS App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Create app bundle
+        run: |
+          APP_NAME="HermesAgent"
+          DISPLAY_NAME="Hermes Agent"
+          BUILD_DIR=".build/release"
+          APP_BUNDLE="$DISPLAY_NAME.app"
+
+          mkdir -p "$APP_BUNDLE/Contents/MacOS"
+          mkdir -p "$APP_BUNDLE/Contents/Resources"
+          cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+
+          # Convert icon
+          ICONSET="AppIcon.iconset"
+          mkdir -p "$ICONSET"
+          sips -z 16 16     "Hermes Icon.png" --out "$ICONSET/icon_16x16.png"
+          sips -z 32 32     "Hermes Icon.png" --out "$ICONSET/icon_16x16@2x.png"
+          sips -z 32 32     "Hermes Icon.png" --out "$ICONSET/icon_32x32.png"
+          sips -z 64 64     "Hermes Icon.png" --out "$ICONSET/icon_32x32@2x.png"
+          sips -z 128 128   "Hermes Icon.png" --out "$ICONSET/icon_128x128.png"
+          sips -z 256 256   "Hermes Icon.png" --out "$ICONSET/icon_128x128@2x.png"
+          sips -z 256 256   "Hermes Icon.png" --out "$ICONSET/icon_256x256.png"
+          sips -z 512 512   "Hermes Icon.png" --out "$ICONSET/icon_256x256@2x.png"
+          sips -z 512 512   "Hermes Icon.png" --out "$ICONSET/icon_512x512.png"
+          sips -z 1024 1024 "Hermes Icon.png" --out "$ICONSET/icon_512x512@2x.png"
+          iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+          rm -rf "$ICONSET"
+
+          # Write Info.plist
+          cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>$DISPLAY_NAME</string>
+              <key>CFBundleIdentifier</key>
+              <string>ai.get-hermes.HermesAgent</string>
+              <key>CFBundleVersion</key>
+              <string>${GITHUB_REF_NAME#v}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${GITHUB_REF_NAME#v}</string>
+              <key>CFBundleExecutable</key>
+              <string>$APP_NAME</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>12.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSUIElement</key>
+              <false/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Create DMG
+        run: |
+          DISPLAY_NAME="Hermes Agent"
+          APP_BUNDLE="$DISPLAY_NAME.app"
+          DMG_NAME="Hermes-Agent-${GITHUB_REF_NAME}.dmg"
+
+          # Create a temporary directory for the DMG contents
+          mkdir -p dmg-staging
+          cp -r "$APP_BUNDLE" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          # Create the DMG
+          hdiutil create -volname "Hermes Agent" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+          rm -rf dmg-staging
+          echo "DMG_NAME=$DMG_NAME" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.DMG_NAME }}
+          generate_release_notes: true
+          body: |
+            ## Hermes Agent for macOS
+
+            Download `${{ env.DMG_NAME }}`, open the DMG, and drag **Hermes Agent** to your Applications folder.
+
+            **First launch:** macOS may show a Gatekeeper warning since the app is not signed. Right-click the app and choose "Open", or run:
+            ```bash
+            xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
+            ```
+
+            **Requirements:** macOS 12+ (Monterey or later)
