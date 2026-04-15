@@ -72,7 +72,7 @@ Settings persist across launches via macOS UserDefaults.
 
 ## SSH Security
 
-- SSH connections use `StrictHostKeyChecking=accept-new` — new hosts are automatically added to `~/.ssh/known_hosts`, but changed host keys are rejected (protects against MITM attacks on reconnection)
+- SSH connections use `StrictHostKeyChecking=accept-new` — on the **first** connection to a new host, the host key is automatically added to `~/.ssh/known_hosts`. On all subsequent connections, a changed host key is rejected (protects against MITM attacks after the first connection)
 - `ExitOnForwardFailure=yes` — the tunnel fails immediately if port forwarding can't be established (no silent failures)
 - SSH key authentication is required — configure your SSH keys before using tunnel mode
 
@@ -99,6 +99,29 @@ Sources/HermesAgent/
 | `Package.swift` | Swift Package Manager manifest (macOS 12+, Swift 5.9+) |
 | `build.sh` | Build script — compiles, bundles .app, converts icon, installs |
 | `Hermes Icon.png` | Source icon (converted to .icns at build time) |
+
+## Troubleshooting
+
+**"Connection refused" or blank page in Direct mode**
+Hermes Web UI is not running on the configured URL. Start it first:
+```bash
+cd ~/hermes-webui-public && bash start.sh
+```
+Then use **Preferences → Reconnect** (or ⌘, → Save & Reconnect) to reload.
+
+**Gatekeeper blocks the app on first launch**
+This is expected — the app is not code-signed. Right-click → Open → Open, or run:
+```bash
+xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
+```
+
+**SSH tunnel shows "disconnected" immediately**
+- Verify SSH key auth works in Terminal: `ssh user@your-server`
+- Check that hermes-webui is running on the remote port you configured
+- The remote port must match where hermes-webui listens (default: 8787)
+
+**App icon looks blurry**
+Run `killall Dock` after building from source to refresh the icon cache.
 
 ## Credits
 

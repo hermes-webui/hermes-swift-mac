@@ -43,6 +43,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>ai.get-hermes.HermesAgent</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>

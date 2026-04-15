@@ -16,6 +16,7 @@ class SplashWindowController: NSWindowController {
         super.init(window: window)
 
         let container = NSView(frame: window.contentView!.bounds)
+        container.autoresizingMask = [.width, .height]
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         container.layer?.cornerRadius = 16
