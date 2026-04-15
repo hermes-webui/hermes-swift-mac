@@ -1,6 +1,6 @@
 # Hermes Agent for macOS
 
-A native macOS desktop app for [Hermes Web UI](https://github.com/nesquena/hermes-webui). Built with Swift and WKWebView — no Electron, no dependencies beyond Xcode Command Line Tools.
+A native macOS desktop app for [Hermes Web UI](https://github.com/nesquena/hermes-webui). Built with Swift and WKWebView — no Electron, no dependencies beyond Xcode Command Line Tools. Created by [@redsparklabs](https://github.com/redsparklabs)
 
 ## Install
 
