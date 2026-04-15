@@ -27,6 +27,7 @@ jobs:
           mkdir -p "$APP_BUNDLE/Contents/MacOS"
           mkdir -p "$APP_BUNDLE/Contents/Resources"
           cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+          chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
           # Convert icon
           ICONSET="AppIcon.iconset"
@@ -44,35 +45,18 @@ jobs:
           iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
           rm -rf "$ICONSET"
 
-          # Write Info.plist
-          cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key>
-              <string>$DISPLAY_NAME</string>
-              <key>CFBundleIdentifier</key>
-              <string>ai.get-hermes.HermesAgent</string>
-              <key>CFBundleVersion</key>
-              <string>${GITHUB_REF_NAME#v}</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${GITHUB_REF_NAME#v}</string>
-              <key>CFBundleExecutable</key>
-              <string>$APP_NAME</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleIconFile</key>
-              <string>AppIcon</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>12.0</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-              <key>LSUIElement</key>
-              <false/>
-          </dict>
-          </plist>
-          PLIST
+          # Write Info.plist — use /usr/libexec/PlistBuddy for clean output
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleName string 'Hermes Agent'" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ai.get-hermes.HermesAgent" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string HermesAgent" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false" "$APP_BUNDLE/Contents/Info.plist"
 
       - name: Create DMG
         run: |
