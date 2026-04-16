@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -20,8 +21,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         setupMenu()
         seedDefaultsIfNeeded()
+        requestMicrophonePermission()
         startTunnel()
     }
+
+    private func requestMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        case .denied:
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Microphone Access Required"
+                alert.informativeText = "Hermes Agent needs microphone access for voice input. Enable it in System Settings → Privacy & Security → Microphone."
+                alert.addButton(withTitle: "Open System Settings")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(
+                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                }
+            }
+        default:
+            break
+        }
+    }
+
 
     func seedDefaultsIfNeeded() {
         let defaults = UserDefaults.standard

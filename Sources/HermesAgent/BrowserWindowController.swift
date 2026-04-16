@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import WebKit
 
@@ -67,13 +68,31 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         prefs.setValue(true, forKey: "javaScriptCanAccessClipboard")
         prefs.setValue(true, forKey: "DOMPasteAllowed")
         config.preferences = prefs
-        let script = WKUserScript(
+        let pasteScript = WKUserScript(
             source:
                 "document.addEventListener('paste', function(e) { e.stopImmediatePropagation(); }, true);",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
-        config.userContentController.addUserScript(script)
+        config.userContentController.addUserScript(pasteScript)
+
+        // Suppress web Notification permission prompts — native macOS notifications handle this instead
+        let notificationScript = WKUserScript(
+            source: "Notification.requestPermission = function(cb) { if (cb) cb('denied'); return Promise.resolve('denied'); };",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(notificationScript)
+
+        // Suppress Web Speech API so hermes-webui falls back to its MediaRecorder + /api/transcribe
+        // path. WebKit's built-in webkitSpeechRecognition only uses the macOS local speech model
+        // which is unreliable; the backend transcription path works correctly.
+        let speechSuppressionScript = WKUserScript(
+            source: "window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(speechSuppressionScript)
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
@@ -264,5 +283,29 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Ensure the WebView holds keyboard focus whenever the window is active,
         // so shortcuts like Cmd+K reach JavaScript without requiring an extra click.
         webView.becomeFirstResponder()
+    }
+
+    // MARK: - Microphone / camera permissions
+
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let mediaType: AVMediaType = (type == .camera) ? .video : .audio
+        switch AVCaptureDevice.authorizationStatus(for: mediaType) {
+        case .authorized:
+            decisionHandler(.grant)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: mediaType) { granted in
+                DispatchQueue.main.async { decisionHandler(granted ? .grant : .deny) }
+            }
+        case .denied, .restricted:
+            decisionHandler(.deny)
+        @unknown default:
+            decisionHandler(.deny)
+        }
     }
 }

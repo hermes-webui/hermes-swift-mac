@@ -1,5 +1,16 @@
 # Changelog
 
+## [v1.0.3] — 2026-04-16
+
+### Added
+- Microphone permission prompt at app launch — macOS shows the system dialog on first run before the user touches the mic button. If previously denied, a native alert appears with an "Open System Settings" button linking directly to Privacy & Security → Microphone. (PR #18, fixes #16, by @redsparklabs)
+- `requestMediaCapturePermissionFor` WKUIDelegate method — WKWebView now forwards microphone access requests through the macOS TCC authorization lifecycle before granting or denying `getUserMedia`. Without this, the browser `getUserMedia` call silently fails even when system permission is granted. (PR #18, fixes #16, by @redsparklabs)
+- `NSMicrophoneUsageDescription` added to Info.plist (both build.sh and CI workflow) — macOS requires this string to show the system microphone permission dialog. Previously present only in build.sh, now also in the CI workflow so downloaded DMGs work correctly. (PR #18, fixes #16)
+
+### Fixed
+- Web notification permission prompts suppressed — a WKUserScript overrides `Notification.requestPermission` to always resolve as "denied", preventing browser-style permission dialogs from appearing inside the native wrapper. UNUserNotificationCenter is the correct path for response alerts in a native app. (PR #18, fixes #14, by @redsparklabs)
+- `webkitSpeechRecognition` suppressed via WKUserScript — forces hermes-webui to fall back to its MediaRecorder + `/api/transcribe` backend path, which works reliably. WebKit's built-in local speech model is slow and inconsistent. (PR #18, by @redsparklabs)
+
 All notable changes to Hermes Agent for macOS are documented here.
 
 ## [v1.0.2] — 2026-04-16
