@@ -13,9 +13,15 @@ class BrowserWindow: NSWindow {
     }
 }
 
-class BrowserWindowController: NSWindowController, WKUIDelegate, WKNavigationDelegate {
+// Lets the first click on the WebView both focus it and register as a content
+// click simultaneously, fixing buttons that appear unresponsive after focus moves away.
+private class HermesWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
 
-    private var webView: WKWebView!
+class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
+
+    private var webView: HermesWebView!
     private var statusBar: NSView!
     private var separator: NSView!
     private var statusDot: NSView!
@@ -44,6 +50,7 @@ class BrowserWindowController: NSWindowController, WKUIDelegate, WKNavigationDel
         window.onPaste = { [weak self] in
             self?.handlePaste()
         }
+        window.delegate = self
 
         buildUI()
     }
@@ -70,7 +77,7 @@ class BrowserWindowController: NSWindowController, WKUIDelegate, WKNavigationDel
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
-        webView = WKWebView(frame: webFrame, configuration: config)
+        webView = HermesWebView(frame: webFrame, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -249,5 +256,13 @@ class BrowserWindowController: NSWindowController, WKUIDelegate, WKNavigationDel
         panel.beginSheetModal(for: self.window!) { response in
             completionHandler(response == .OK ? panel.urls : nil)
         }
+    }
+
+    // MARK: - Window focus
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        // Ensure the WebView holds keyboard focus whenever the window is active,
+        // so shortcuts like Cmd+K reach JavaScript without requiring an extra click.
+        webView.becomeFirstResponder()
     }
 }
