@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "HermesAgent",
             path: "Sources/HermesAgent"
-        )
+        ),
+        .testTarget(
+            name: "HermesAgentTests",
+            dependencies: [],
+            path: "Tests/HermesAgentTests"
+        ),
     ]
 )
