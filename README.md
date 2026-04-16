@@ -56,6 +56,7 @@ Switch between modes in **Preferences** (⌘,) → **Connection Mode**.
 - Status bar with live tunnel state and one-click reconnect (SSH mode)
 - Graceful shutdown — SSH tunnel is always cleaned up on quit (⌘Q)
 - Edit menu with Undo, Redo, Cut, Copy, Paste, Select All
+- Reliable focus handling — clicks and keyboard shortcuts (Cmd+K etc.) work immediately after switching windows, with no extra click required
 
 ## Configuration
 
@@ -101,6 +102,7 @@ Sources/HermesAgent/
 | `Package.swift` | Swift Package Manager manifest (macOS 12+, Swift 5.9+) |
 | `build.sh` | Build script — compiles, bundles .app, converts icon, installs |
 | `Hermes Icon.png` | Source icon (converted to .icns at build time) |
+| `Tests/HermesAgentTests/` | Unit tests for validation and SSH argument logic — run with `swift test` |
 
 ## Troubleshooting
 
