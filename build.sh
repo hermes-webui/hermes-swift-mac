@@ -59,9 +59,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <false/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Hermes Agent uses the microphone for voice input in the chat interface.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Hermes Agent uses speech recognition to transcribe your voice input.</string>
 </dict>
 </plist>
 PLIST
+
+echo "→ Signing (ad-hoc)..."
+codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "→ Installing to Applications..."
 rm -rf "/Applications/$APP_BUNDLE"

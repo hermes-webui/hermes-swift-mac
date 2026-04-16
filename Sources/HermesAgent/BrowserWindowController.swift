@@ -84,51 +84,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         config.userContentController.addUserScript(notificationScript)
 
-        // Recover UI from a hung spinner when getUserMedia is denied.
-        // Without this, the voice-input popover gets stuck with no error and no dismiss path.
-        let micErrorScript = WKUserScript(
-            source: """
-            (function() {
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-                var _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-                navigator.mediaDevices.getUserMedia = function(constraints) {
-                    return _orig(constraints).catch(function(err) {
-                        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' ||
-                            err.name === 'NotFoundError') {
-                            // Dismiss any open popover/spinner by firing Escape
-                            document.dispatchEvent(new KeyboardEvent('keydown', {
-                                key: 'Escape', code: 'Escape', keyCode: 27,
-                                bubbles: true, cancelable: true
-                            }));
-                            // Show inline toast directing user to System Settings
-                            var existing = document.getElementById('__hermes-mic-err');
-                            if (existing) existing.remove();
-                            var toast = document.createElement('div');
-                            toast.id = '__hermes-mic-err';
-                            toast.textContent = 'Microphone access denied. Enable it in System Settings › Privacy & Security › Microphone, then relaunch.';
-                            toast.style.cssText = [
-                                'position:fixed', 'bottom:80px', 'left:50%',
-                                'transform:translateX(-50%)',
-                                'background:#1c1c1e', 'color:#f2f2f7',
-                                'padding:10px 18px', 'border-radius:10px',
-                                'font:13px/1.4 -apple-system,sans-serif',
-                                'z-index:2147483647', 'max-width:360px',
-                                'text-align:center',
-                                'box-shadow:0 4px 16px rgba(0,0,0,.5)',
-                                'pointer-events:none'
-                            ].join(';');
-                            document.body.appendChild(toast);
-                            setTimeout(function() { toast.remove(); }, 7000);
-                        }
-                        return Promise.reject(err);
-                    });
-                };
-            })();
-            """,
+        // Suppress Web Speech API so hermes-webui falls back to its MediaRecorder + /api/transcribe
+        // path. WebKit's built-in webkitSpeechRecognition only uses the macOS local speech model
+        // which is unreliable; the backend transcription path works correctly.
+        let speechSuppressionScript = WKUserScript(
+            source: "window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
-        config.userContentController.addUserScript(micErrorScript)
+        config.userContentController.addUserScript(speechSuppressionScript)
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
@@ -331,16 +295,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
         let mediaType: AVMediaType = (type == .camera) ? .video : .audio
-
         switch AVCaptureDevice.authorizationStatus(for: mediaType) {
         case .authorized:
             decisionHandler(.grant)
         case .notDetermined:
-            // Request the macOS system permission dialog, then resolve.
             AVCaptureDevice.requestAccess(for: mediaType) { granted in
-                DispatchQueue.main.async {
-                    decisionHandler(granted ? .grant : .deny)
-                }
+                DispatchQueue.main.async { decisionHandler(granted ? .grant : .deny) }
             }
         case .denied, .restricted:
             decisionHandler(.deny)
