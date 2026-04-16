@@ -57,6 +57,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <true/>
     <key>LSUIElement</key>
     <false/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Hermes Agent uses the microphone for voice input in the chat interface.</string>
 </dict>
 </plist>
 PLIST

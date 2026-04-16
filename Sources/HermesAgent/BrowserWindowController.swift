@@ -67,13 +67,67 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         prefs.setValue(true, forKey: "javaScriptCanAccessClipboard")
         prefs.setValue(true, forKey: "DOMPasteAllowed")
         config.preferences = prefs
-        let script = WKUserScript(
+        let pasteScript = WKUserScript(
             source:
                 "document.addEventListener('paste', function(e) { e.stopImmediatePropagation(); }, true);",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
-        config.userContentController.addUserScript(script)
+        config.userContentController.addUserScript(pasteScript)
+
+        // Suppress web Notification permission prompts — native macOS notifications handle this instead
+        let notificationScript = WKUserScript(
+            source: "Notification.requestPermission = function(cb) { if (cb) cb('denied'); return Promise.resolve('denied'); };",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(notificationScript)
+
+        // Recover UI from a hung spinner when getUserMedia is denied.
+        // Without this, the voice-input popover gets stuck with no error and no dismiss path.
+        let micErrorScript = WKUserScript(
+            source: """
+            (function() {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+                var _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+                navigator.mediaDevices.getUserMedia = function(constraints) {
+                    return _orig(constraints).catch(function(err) {
+                        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' ||
+                            err.name === 'NotFoundError') {
+                            // Dismiss any open popover/spinner by firing Escape
+                            document.dispatchEvent(new KeyboardEvent('keydown', {
+                                key: 'Escape', code: 'Escape', keyCode: 27,
+                                bubbles: true, cancelable: true
+                            }));
+                            // Show inline toast directing user to System Settings
+                            var existing = document.getElementById('__hermes-mic-err');
+                            if (existing) existing.remove();
+                            var toast = document.createElement('div');
+                            toast.id = '__hermes-mic-err';
+                            toast.textContent = 'Microphone access denied. Enable it in System Settings \u203a Privacy & Security \u203a Microphone, then relaunch.';
+                            toast.style.cssText = [
+                                'position:fixed', 'bottom:80px', 'left:50%',
+                                'transform:translateX(-50%)',
+                                'background:#1c1c1e', 'color:#f2f2f7',
+                                'padding:10px 18px', 'border-radius:10px',
+                                'font:13px/1.4 -apple-system,sans-serif',
+                                'z-index:2147483647', 'max-width:360px',
+                                'text-align:center',
+                                'box-shadow:0 4px 16px rgba(0,0,0,.5)',
+                                'pointer-events:none'
+                            ].join(';');
+                            document.body.appendChild(toast);
+                            setTimeout(function() { toast.remove(); }, 7000);
+                        }
+                        return Promise.reject(err);
+                    });
+                };
+            })();
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(micErrorScript)
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
@@ -264,5 +318,19 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Ensure the WebView holds keyboard focus whenever the window is active,
         // so shortcuts like Cmd+K reach JavaScript without requiring an extra click.
         webView.becomeFirstResponder()
+    }
+
+    // MARK: - Microphone / camera permissions
+
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        // Grant permission to the web content; macOS TCC will enforce the actual
+        // system-level prompt (NSMicrophoneUsageDescription) if not yet approved.
+        decisionHandler(.grant)
     }
 }
