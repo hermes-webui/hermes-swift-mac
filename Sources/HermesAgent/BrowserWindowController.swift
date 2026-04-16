@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import WebKit
 
@@ -104,7 +105,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                             if (existing) existing.remove();
                             var toast = document.createElement('div');
                             toast.id = '__hermes-mic-err';
-                            toast.textContent = 'Microphone access denied. Enable it in System Settings \u203a Privacy & Security \u203a Microphone, then relaunch.';
+                            toast.textContent = 'Microphone access denied. Enable it in System Settings › Privacy & Security › Microphone, then relaunch.';
                             toast.style.cssText = [
                                 'position:fixed', 'bottom:80px', 'left:50%',
                                 'transform:translateX(-50%)',
@@ -329,8 +330,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        // Grant permission to the web content; macOS TCC will enforce the actual
-        // system-level prompt (NSMicrophoneUsageDescription) if not yet approved.
-        decisionHandler(.grant)
+        let mediaType: AVMediaType = (type == .camera) ? .video : .audio
+
+        switch AVCaptureDevice.authorizationStatus(for: mediaType) {
+        case .authorized:
+            decisionHandler(.grant)
+        case .notDetermined:
+            // Request the macOS system permission dialog, then resolve.
+            AVCaptureDevice.requestAccess(for: mediaType) { granted in
+                DispatchQueue.main.async {
+                    decisionHandler(granted ? .grant : .deny)
+                }
+            }
+        case .denied, .restricted:
+            decisionHandler(.deny)
+        @unknown default:
+            decisionHandler(.deny)
+        }
     }
 }
