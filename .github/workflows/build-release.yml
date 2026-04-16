@@ -64,6 +64,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Hermes Agent uses the microphone for voice input in the chat interface.'" "$APP_BUNDLE/Contents/Info.plist"
 
       - name: Create DMG
         run: |

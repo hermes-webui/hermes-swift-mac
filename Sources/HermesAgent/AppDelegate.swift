@@ -1,6 +1,5 @@
 import AVFoundation
 import Cocoa
-import Speech
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -23,7 +22,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenu()
         seedDefaultsIfNeeded()
         requestMicrophonePermission()
-        requestSpeechRecognitionPermission()
         startTunnel()
     }
 
@@ -48,26 +46,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func requestSpeechRecognitionPermission() {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .notDetermined:
-            SFSpeechRecognizer.requestAuthorization { _ in }
-        case .denied, .restricted:
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Speech Recognition Access Required"
-                alert.informativeText = "Hermes Agent needs speech recognition access for voice input. Enable it in System Settings → Privacy & Security → Speech Recognition."
-                alert.addButton(withTitle: "Open System Settings")
-                alert.addButton(withTitle: "Later")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(
-                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!)
-                }
-            }
-        default:
-            break
-        }
-    }
 
     func seedDefaultsIfNeeded() {
         let defaults = UserDefaults.standard

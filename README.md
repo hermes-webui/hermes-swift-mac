@@ -57,6 +57,7 @@ Switch between modes in **Preferences** (⌘,) → **Connection Mode**.
 - Graceful shutdown — SSH tunnel is always cleaned up on quit (⌘Q)
 - Edit menu with Undo, Redo, Cut, Copy, Paste, Select All
 - Reliable focus handling — clicks and keyboard shortcuts (Cmd+K etc.) work immediately after switching windows, with no extra click required
+- Voice input support — microphone permission is requested at first launch; if denied, a native alert links directly to System Settings → Microphone
 
 ## Configuration
 
@@ -123,6 +124,12 @@ xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
 - Verify SSH key auth works in Terminal: `ssh user@your-server`
 - Check that hermes-webui is running on the remote port you configured
 - The remote port must match where hermes-webui listens (default: 8787)
+
+**Voice input not working / microphone denied**
+macOS requires explicit permission. On first launch, the system dialog should appear automatically. If you denied it:
+1. Open **System Settings → Privacy & Security → Microphone**
+2. Enable the toggle for **Hermes Agent**
+3. Restart the app
 
 **App icon looks blurry**
 Run `killall Dock` after building from source to refresh the icon cache.
