@@ -6,6 +6,10 @@ DISPLAY_NAME="Hermes Agent"
 BUILD_DIR=".build/release"
 APP_BUNDLE="$DISPLAY_NAME.app"
 
+# Derive version from the most recent git tag (e.g. v1.0.8 → 1.0.8).
+# Falls back to "dev" if no tags exist, so the build never silently shows "1.0".
+VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "dev")
+
 echo "→ Building..."
 swift build -c release
 
@@ -62,9 +66,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <key>CFBundleIdentifier</key>
     <string>ai.get-hermes.HermesAgent</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>

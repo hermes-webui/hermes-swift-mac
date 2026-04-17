@@ -344,14 +344,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
     }
 
-    // MARK: - Error page (connection failed)
+    // MARK: - Error page (connection failed or server error)
 
+    // Fires when the network request itself fails (server not running, no route, etc.)
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
         let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
         let isSSH = mode == "ssh"
 
-        // HTML-escape the URL before interpolating into the page
         let safeURL = targetURL
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -362,6 +362,35 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             ? "The SSH tunnel may not be established, or hermes-webui may not be running on the remote server."
             : "Make sure hermes-webui is running. Start it with:<br><code>cd ~/hermes-webui-public &amp;&amp; bash start.sh</code>"
 
+        showErrorPage(in: webView, safeURL: safeURL, tip: tip)
+    }
+
+    // Fires when the server responds but with an HTTP error (5xx, bad gateway, etc.)
+    // didFailProvisionalNavigation only catches network-level failures; this catches
+    // cases where the server is reachable but returns an error page.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if let httpResponse = navigationResponse.response as? HTTPURLResponse,
+           httpResponse.statusCode >= 500 {
+            decisionHandler(.cancel)
+            let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
+            let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
+            let isSSH = mode == "ssh"
+            let safeURL = targetURL
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+            let tip = isSSH
+                ? "The server returned an error. Check that hermes-webui is running correctly on the remote server."
+                : "The server returned an error (HTTP \(httpResponse.statusCode)). Check the hermes-webui logs."
+            showErrorPage(in: webView, safeURL: safeURL, tip: tip)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    private func showErrorPage(in webView: WKWebView, safeURL: String, tip: String) {
         let html = """
         <!DOCTYPE html>
         <html>
