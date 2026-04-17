@@ -188,7 +188,9 @@ jobs:
           DMG_NAME="Hermes-Agent-${GITHUB_REF_NAME}.dmg"
 
           mkdir -p dmg-staging
-          cp -r "$APP_BUNDLE" dmg-staging/
+          # ditto preserves framework symlinks correctly; cp -r mishandles them
+          # on older macOS (per Apple DTS), invalidating nested signatures.
+          ditto "$APP_BUNDLE" "dmg-staging/$APP_BUNDLE"
           ln -s /Applications dmg-staging/Applications
 
           # -fs APFS is critical: the default HFS+ filesystem adds metadata
