@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import Sparkle
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -15,10 +16,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var splashWindow: SplashWindowController!
     var browserWindow: BrowserWindowController?
     var preferencesWindow: PreferencesWindowController?
+    var updaterController: SPUStandardUpdaterController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Initialize Sparkle updater — feed URL comes from SUFeedURL in Info.plist
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+
         setupMenu()
         seedDefaultsIfNeeded()
         requestMicrophonePermission()
@@ -46,7 +56,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-
     func seedDefaultsIfNeeded() {
         let defaults = UserDefaults.standard
         if defaults.string(forKey: "sshUser") == nil {
@@ -72,7 +81,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tunnelManager?.stop()
 
         if connectionMode == "ssh" {
-            // SSH tunnel mode
             let user = defaults.string(forKey: "sshUser") ?? defaultSSHUser
             let host = defaults.string(forKey: "sshHost") ?? defaultSSHHost
             let localPort = Int(defaults.string(forKey: "localPort") ?? defaultLocalPort) ?? 8787
@@ -108,7 +116,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         } else {
-            // Direct mode (local)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.splashWindow.close()
                 let browser = BrowserWindowController(
@@ -135,6 +142,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(
             withTitle: "About \(appTitle)",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Check for Updates…",
+            action: #selector(checkForUpdates),
+            keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
@@ -167,6 +179,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
 
         NSApp.mainMenu = menuBar
+    }
+
+    @objc func checkForUpdates() {
+        updaterController.checkForUpdates(nil)
     }
 
     @objc func openPreferences() {

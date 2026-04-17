@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.0.4] — 2026-04-16
+
+### Added
+- Sparkle 2 auto-update support — app now checks `https://get-hermes.ai/appcast.xml` on launch and shows a native update dialog when a new version is available. A "Check for Updates…" menu item is available under the app menu at any time. (PR #21, closes #17)
+- `Entitlements.plist` — hardened runtime entitlements for network access and microphone. Required for notarization. App remains unsandboxed so SSH tunnel (NSTask) continues to work. (PR #21)
+- `appcast.xml` template in repo root — Sparkle update feed published at `https://get-hermes.ai/appcast.xml`. (PR #21)
+
+### Fixed
+- WKWebView navigation guard — external links (any http/https URL that is not localhost or the configured SSH host) now open in Safari instead of navigating inside the app. `file://` URLs are blocked entirely. (PR #21, closes #7)
+
+### Changed
+- CI release workflow now imports a Developer ID Application certificate, signs the app with hardened runtime, notarizes via `notarytool`, and staples the ticket to the DMG. Users on v1.0.4+ will no longer see the Gatekeeper "unidentified developer" warning on first launch. (PR #21)
+- CI generates a Sparkle ed25519 signature for each DMG and embeds it in the release notes for appcast maintenance. (PR #21)
+
 ## [v1.0.3] — 2026-04-16
 
 ### Added
