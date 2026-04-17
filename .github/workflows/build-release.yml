@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve Swift packages
+        run: swift package resolve
+
       - name: Build universal binary (arm64 + x86_64)
         run: |
           swift build -c release --arch arm64
@@ -28,13 +31,25 @@ jobs:
         run: |
           APP_NAME="HermesAgent"
           DISPLAY_NAME="Hermes Agent"
-          BUILD_DIR=".build/universal"
           APP_BUNDLE="$DISPLAY_NAME.app"
+          VERSION="${GITHUB_REF_NAME#v}"
 
           mkdir -p "$APP_BUNDLE/Contents/MacOS"
           mkdir -p "$APP_BUNDLE/Contents/Resources"
-          cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+          mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+
+          cp ".build/universal/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
           chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+
+          # Embed Sparkle.framework (macOS slice from the xcframework)
+          SPARKLE_XCFRAMEWORK=$(find .build/artifacts -name "Sparkle.xcframework" | head -1)
+          SPARKLE_FW="$SPARKLE_XCFRAMEWORK/macos-arm64_x86_64/Sparkle.framework"
+          cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
+
+          # Fix rpath so the binary finds the embedded framework
+          install_name_tool \
+            -add_rpath "@executable_path/../Frameworks" \
+            "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
           # Convert icon
           ICONSET="AppIcon.iconset"
@@ -52,19 +67,65 @@ jobs:
           iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
           rm -rf "$ICONSET"
 
-          # Write Info.plist — use /usr/libexec/PlistBuddy for clean output
-          VERSION="${GITHUB_REF_NAME#v}"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleName string 'Hermes Agent'" "$APP_BUNDLE/Contents/Info.plist"
+          # Write Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleName string 'Hermes Agent'"              "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ai.get-hermes.HermesAgent" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string HermesAgent" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION"                 "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION"      "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string HermesAgent"           "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL"                 "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon"                 "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0"              "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true"               "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false"                          "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Hermes Agent uses the microphone for voice input in the chat interface.'" "$APP_BUNDLE/Contents/Info.plist"
+          # Sparkle keys
+          /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string 'daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY='" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :SUFeedURL string 'https://get-hermes.ai/appcast.xml'" "$APP_BUNDLE/Contents/Info.plist"
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "build-keychain-password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "build-keychain-password" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "build-keychain-password" "$KEYCHAIN_PATH"
+
+          rm "$CERT_PATH"
+
+      - name: Sign app bundle (Developer ID + hardened runtime)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DISPLAY_NAME="Hermes Agent"
+          APP_BUNDLE="$DISPLAY_NAME.app"
+          IDENTITY="Developer ID Application"
+
+          # Sign nested frameworks and XPC services first
+          find "$APP_BUNDLE/Contents/Frameworks" -name "*.framework" -o -name "*.xpc" | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" "$f"
+          done
+
+          # Sign the main app
+          codesign \
+            --force \
+            --options runtime \
+            --entitlements Entitlements.plist \
+            --sign "$IDENTITY" \
+            "$APP_BUNDLE"
+
+          # Verify
+          codesign --verify --deep --strict "$APP_BUNDLE"
+          echo "Signing OK"
 
       - name: Create DMG
         run: |
@@ -72,12 +133,10 @@ jobs:
           APP_BUNDLE="$DISPLAY_NAME.app"
           DMG_NAME="Hermes-Agent-${GITHUB_REF_NAME}.dmg"
 
-          # Create a temporary directory for the DMG contents
           mkdir -p dmg-staging
           cp -r "$APP_BUNDLE" dmg-staging/
           ln -s /Applications dmg-staging/Applications
 
-          # Create the DMG
           hdiutil create -volname "Hermes Agent" \
             -srcfolder dmg-staging \
             -ov -format UDZO \
@@ -86,19 +145,77 @@ jobs:
           rm -rf dmg-staging
           echo "DMG_NAME=$DMG_NAME" >> $GITHUB_ENV
 
+      - name: Sign DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          codesign --force --sign "Developer ID Application" "${{ env.DMG_NAME }}"
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "${{ env.DMG_NAME }}" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: |
+          xcrun stapler staple "${{ env.DMG_NAME }}"
+          xcrun stapler validate "${{ env.DMG_NAME }}"
+          echo "Notarization and stapling OK"
+
+      - name: Generate Sparkle ed25519 signature
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          # Download Sparkle tools matching the version used by the app
+          SPARKLE_VERSION=$(swift package show-dependencies --format json | python3 -c "
+          import json,sys
+          deps = json.load(sys.stdin)
+          for d in deps.get('dependencies', []):
+              if 'sparkle' in d.get('url','').lower():
+                  print(d['version'])
+                  break
+          " 2>/dev/null || echo "2.9.1")
+
+          curl -L "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" \
+            -o sparkle-tools.tar.xz
+          mkdir -p sparkle-tools
+          tar -xf sparkle-tools.tar.xz -C sparkle-tools
+
+          # sign_update reads the private key from the SPARKLE_PRIVATE_KEY env var
+          SIG=$(echo "$SPARKLE_PRIVATE_KEY" | sparkle-tools/bin/sign_update "${{ env.DMG_NAME }}" -f -)
+          SIZE=$(stat -f%z "${{ env.DMG_NAME }}")
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "SPARKLE_SIG=$SIG" >> $GITHUB_ENV
+          echo "SPARKLE_SIZE=$SIZE" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+          echo "Sparkle signature: $SIG"
+          echo "DMG size: $SIZE bytes"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.DMG_NAME }}
           generate_release_notes: true
           body: |
-            ## Hermes Agent for macOS
+            ## Hermes Agent for macOS — ${{ env.RELEASE_VERSION }}
 
             Download `${{ env.DMG_NAME }}`, open the DMG, and drag **Hermes Agent** to your Applications folder.
 
-            **First launch:** macOS may show a Gatekeeper warning since the app is not signed. Right-click the app and choose "Open", or run:
-            ```bash
-            xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
-            ```
+            This release is signed with a Developer ID certificate and notarized by Apple.
+            macOS will open it without any Gatekeeper warning.
 
             **Requirements:** macOS 12+ (Monterey or later)
+
+            ---
+            <!-- Sparkle appcast metadata (do not remove) -->
+            <!-- sparkle:edSignature: ${{ env.SPARKLE_SIG }} -->
+            <!-- sparkle:length: ${{ env.SPARKLE_SIZE }} -->

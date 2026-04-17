@@ -277,6 +277,57 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
     }
 
+    // MARK: - Navigation guard (issue #7)
+    // Allow only localhost/127.0.0.1 navigation. All other http/https links open in
+    // Safari. file:// is blocked entirely.
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        let scheme = url.scheme?.lowercased() ?? ""
+
+        // Block file:// entirely
+        if scheme == "file" {
+            decisionHandler(.cancel)
+            return
+        }
+
+        // Allow non-http(s) schemes (about:, blob:, data:, etc.) — WebKit needs these internally
+        guard scheme == "http" || scheme == "https" else {
+            decisionHandler(.allow)
+            return
+        }
+
+        let host = url.host?.lowercased() ?? ""
+
+        // Allow localhost and loopback
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            decisionHandler(.allow)
+            return
+        }
+
+        // Allow navigation to the configured remote host (SSH mode)
+        let configuredURL = UserDefaults.standard.string(forKey: "targetURL") ?? ""
+        if let configuredHost = URL(string: configuredURL)?.host?.lowercased(),
+            !configuredHost.isEmpty,
+            host == configuredHost
+        {
+            decisionHandler(.allow)
+            return
+        }
+
+        // Everything else opens in Safari
+        NSWorkspace.shared.open(url)
+        decisionHandler(.cancel)
+    }
+
     // MARK: - Window focus
 
     func windowDidBecomeKey(_ notification: Notification) {

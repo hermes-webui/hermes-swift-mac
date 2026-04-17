@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Network access for SSH tunnel, WebUI, and Sparkle update checks -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Microphone for voice input in the chat interface -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    <!-- No sandbox — required for SSH tunnel subprocess (NSTask) -->
+</dict>
+</plist>
