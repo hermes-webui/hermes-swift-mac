@@ -97,8 +97,26 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "build-keychain-password" "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+
+          # Import Apple's Developer ID intermediate CAs so codesign can build
+          # a complete cert chain even if the .p12 only contains the leaf.
+          # Without a full chain, notarization rejects with "signature is invalid".
+          for url in \
+            "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" \
+            "https://www.apple.com/certificateauthority/DeveloperIDCA.cer" \
+            "https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer" \
+            "https://www.apple.com/appleca/AppleIncRootCertificate.cer"; do
+            NAME=$(basename "$url")
+            curl -fsSL "$url" -o "$RUNNER_TEMP/$NAME" || continue
+            security import "$RUNNER_TEMP/$NAME" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign || true
+          done
+
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
           security set-key-partition-list -S apple-tool:,apple: -s -k "build-keychain-password" "$KEYCHAIN_PATH"
+
+          # Show what identities were imported (no secrets leaked by find-identity)
+          echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
           rm "$CERT_PATH"
 
@@ -115,43 +133,52 @@ jobs:
           # must be re-signed with our Developer ID before the framework itself.
           # Preserve original entitlements on Sparkle's XPC services — stripping
           # them causes Apple notarization to reject with "Invalid".
+          # --timestamp forces codesign to embed a secure timestamp from Apple's
+          # TSA, which notarization requires (default behavior is unreliable in CI).
 
           # 1. Updater.app (nested app bundle): inner binary then bundle
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/Updater.app/Contents/MacOS/Updater"
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/Updater.app"
 
           # 2. XPC services: inner binaries first, then bundles (preserve entitlements on bundles)
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
-          codesign --force --options runtime \
+          codesign --force --timestamp --options runtime \
             --preserve-metadata=entitlements \
             --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/XPCServices/Installer.xpc/Contents/MacOS/Installer"
-          codesign --force --options runtime \
+          codesign --force --timestamp --options runtime \
             --preserve-metadata=entitlements \
             --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
 
           # 3. Standalone Autoupdate helper binary
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/Autoupdate"
 
           # 4. Sparkle.framework itself
-          codesign --force --options runtime --sign "$IDENTITY" \
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
           # 5. Main app binary + bundle
           codesign \
             --force \
+            --timestamp \
             --options runtime \
             --entitlements Entitlements.plist \
             --sign "$IDENTITY" \
             "$APP_BUNDLE"
 
-          # Verify
+          # Verify locally, then dump the full signature of the main binaries so
+          # CI logs show the embedded timestamp and cert chain — critical for
+          # diagnosing notarization "signature is invalid" rejections.
           codesign --verify --deep --strict "$APP_BUNDLE"
+          echo "=== codesign -dvv HermesAgent ==="
+          codesign -dvv "$APP_BUNDLE/Contents/MacOS/HermesAgent" 2>&1
+          echo "=== codesign -dvv Sparkle.framework ==="
+          codesign -dvv "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" 2>&1
           echo "Signing OK"
 
       - name: Create DMG
@@ -178,22 +205,24 @@ jobs:
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # Submit to Apple notary service — no need to codesign the DMG itself,
-          # only the .app bundle inside needs to be signed.
-          SUBMISSION_ID=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
+          # Submit to Apple notary service and fail loudly if status != Accepted.
+          # --wait returns 0 even when the archive is rejected, so we must parse
+          # the JSON status ourselves.
+          OUTPUT=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait \
-            --output-format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])")
-
+            --output-format json)
+          echo "$OUTPUT"
+          SUBMISSION_ID=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','Unknown'))")
           echo "NOTARIZATION_ID=$SUBMISSION_ID" >> $GITHUB_ENV
-
-          # Re-run to check final status and print it
-          xcrun notarytool info "$SUBMISSION_ID" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_ID_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID"
+          echo "Notarization status: $STATUS"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization rejected with status: $STATUS (see Fetch notarization log step for details)"
+            exit 1
+          fi
 
       - name: Fetch notarization log (always, for diagnostics)
         if: always()
