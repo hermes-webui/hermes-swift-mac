@@ -239,21 +239,21 @@ class PreferencesWindowController: NSWindowController {
         testResultLabel.stringValue = "Testing…"
         testResultLabel.textColor = .secondaryLabelColor
 
+        // Use GET (not HEAD) because many dev servers return 405/501 for HEAD
+        // even when they serve GET normally. Treat any HTTPURLResponse as
+        // reachable regardless of status code — if TCP+HTTP completed a
+        // round-trip, the server is up. Only a network-level failure (no
+        // response) counts as "Unreachable".
         var request = URLRequest(url: url, timeoutInterval: 5)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if let httpResponse = response as? HTTPURLResponse,
-                   (200...399).contains(httpResponse.statusCode) {
+                if response is HTTPURLResponse {
                     self.testResultLabel.stringValue = "✓ Connected"
                     self.testResultLabel.textColor = .systemGreen
-                } else if error != nil {
-                    self.testResultLabel.stringValue = "✗ Unreachable"
-                    self.testResultLabel.textColor = .systemRed
                 } else {
-                    // No error and no HTTP response (e.g. non-HTTP scheme) — treat as unreachable
                     self.testResultLabel.stringValue = "✗ Unreachable"
                     self.testResultLabel.textColor = .systemRed
                 }
