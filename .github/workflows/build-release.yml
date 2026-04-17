@@ -191,8 +191,13 @@ jobs:
           cp -r "$APP_BUNDLE" dmg-staging/
           ln -s /Applications dmg-staging/Applications
 
+          # -fs APFS is critical: the default HFS+ filesystem adds metadata
+          # that invalidates signatures on nested frameworks (Sparkle.framework),
+          # causing notarization to reject the DMG as "signature is invalid"
+          # even though codesign --verify passes locally.
           hdiutil create -volname "Hermes Agent" \
             -srcfolder dmg-staging \
+            -fs APFS \
             -ov -format UDZO \
             "$DMG_NAME"
 
