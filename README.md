@@ -2,24 +2,93 @@
 
 A native macOS desktop app for [Hermes Web UI](https://github.com/nesquena/hermes-webui). Built with Swift and WKWebView — no Electron, no dependencies beyond Xcode Command Line Tools. Created by [@redsparklabs](https://github.com/redsparklabs)
 
-<img width="1470" height="922" alt="Screenshot 2026-04-16 at 12 01 18 AM" src="https://github.com/user-attachments/assets/8e704e62-c736-4827-ba50-c41a21d9922f" />
+<img width="1470" height="922" alt="Hermes Agent screenshot" src="https://github.com/user-attachments/assets/8e704e62-c736-4827-ba50-c41a21d9922f" />
 
-## Install
+---
 
-### Option 1: Download the DMG (easiest)
+## What you need
 
-1. Go to [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases)
-2. Download the latest `Hermes-Agent-vX.X.X.dmg`
-3. Open the DMG and drag **Hermes Agent** to your Applications folder
-4. Launch the app — no Gatekeeper warning, no extra steps required
+Hermes Agent is a native window for [Hermes Web UI](https://github.com/nesquena/hermes-webui). The app itself is just a wrapper — it needs Hermes Web UI running somewhere to be useful. Without it you'll see a connection error on launch.
 
-> **Note:** v1.0.4 and later are signed with a Developer ID certificate and notarized by Apple. macOS will open them without any warning. If you downloaded an older version and see a Gatekeeper prompt, upgrade to the latest release.
+**Required:** Hermes Web UI running on your Mac or a remote server.
+**Optional for remote servers:** SSH key authentication configured for that server.
+**macOS:** 12 (Monterey) or later.
 
-### Option 2: Build from source
+---
 
-Requires Xcode Command Line Tools (`xcode-select --install`).
+## Setup
+
+Pick the path that matches where you're starting from.
+
+### Path 1 — New to Hermes: install everything locally
+
+First, get Hermes Web UI running on your Mac:
 
 ```bash
+git clone https://github.com/nesquena/hermes-webui.git ~/hermes-webui-public
+cd ~/hermes-webui-public
+bash start.sh
+```
+
+This starts the Hermes server at `http://localhost:8787`. Follow the [Hermes Web UI README](https://github.com/nesquena/hermes-webui#readme) to configure your API keys during first-run onboarding.
+
+Then install Hermes Agent:
+
+1. Download the latest `Hermes-Agent-vX.X.X.dmg` from [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases)
+2. Open the DMG and drag **Hermes Agent** to your Applications folder
+3. Launch the app — it connects to `http://localhost:8787` by default, which is exactly where you just started Hermes Web UI
+
+No configuration needed. It works out of the box.
+
+---
+
+### Path 2 — Already have Hermes Web UI running locally
+
+If Hermes Web UI is already running on your Mac:
+
+1. Download the latest DMG from [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases)
+2. Drag **Hermes Agent** to Applications and launch it
+
+The default Target URL is `http://localhost:8787`. If you run Hermes on a different port, open **Preferences** (⌘,), update the Target URL, and click **Save & Reconnect**.
+
+You can verify the connection before saving with the **Test Connection** button.
+
+---
+
+### Path 3 — Hermes Web UI on a remote server
+
+If Hermes Web UI runs on a server you access via SSH:
+
+**Before you start:** make sure SSH key authentication is working for that server — `ssh user@your-server` should connect without a password prompt.
+
+1. Download the latest DMG from [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases)
+2. Drag **Hermes Agent** to Applications and launch it
+3. Open **Preferences** (⌘,)
+4. Set **Connection Mode** to **SSH Tunnel**
+5. Fill in:
+   - **Username** — your SSH username on the remote server
+   - **Host** — the server's hostname or IP address
+   - **Local Port** — port on your Mac (default: 8787)
+   - **Remote Port** — port where Hermes Web UI runs on the server (default: 8787)
+6. Click **Test Connection** to verify, then **Save & Reconnect**
+
+The app opens an SSH tunnel on launch, monitors it, and tears it down cleanly on quit. The status bar at the bottom of the window shows tunnel state and a one-click Reconnect button if the connection drops.
+
+---
+
+## Install options
+
+### Download the DMG (recommended)
+
+Go to [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases), download the latest DMG, open it, and drag Hermes Agent to your Applications folder. The app is signed with a Developer ID certificate and notarized by Apple — no Gatekeeper warning.
+
+### Build from source
+
+Requires Xcode Command Line Tools:
+
+```bash
+xcode-select --install   # if not already installed
+
 git clone https://github.com/hermes-webui/hermes-swift-mac.git
 cd hermes-swift-mac
 ./build.sh
@@ -27,124 +96,115 @@ cd hermes-swift-mac
 
 This compiles the app, bundles it with the icon, and installs it to `/Applications/Hermes Agent.app`.
 
-## Connection Modes
-
-The app supports two ways to connect to Hermes Web UI:
-
-### Direct (Local) — default
-
-Connect directly to a local Hermes Web UI instance. The default URL is `http://localhost:8787`. Use this if you run hermes-webui on your own machine.
-
-### SSH Tunnel
-
-Connect to a remote Hermes Web UI through an encrypted SSH tunnel. The app manages the SSH process lifecycle — starting the tunnel on launch, monitoring it, and tearing it down on quit. Configure your SSH credentials in Preferences.
-
-Switch between modes in **Preferences** (⌘,) → **Connection Mode**.
+---
 
 ## Features
 
-- Native macOS app with Dock icon and standard menu bar
-- WKWebView browser — loads the Hermes Web UI directly, no external browser needed
-- Direct local mode (default) or SSH tunnel mode for remote servers
-- Clipboard integration — paste text and images (⌘V) into the web UI
-- File upload support via the paperclip button
-- Native Preferences window (⌘,) for all connection settings
-- Splash screen while connecting
-- Status bar with live tunnel state and one-click reconnect (SSH mode)
-- Graceful shutdown — SSH tunnel is always cleaned up on quit (⌘Q)
-- Edit menu with Undo, Redo, Cut, Copy, Paste, Select All
-- Reliable focus handling — clicks and keyboard shortcuts (Cmd+K etc.) work immediately after switching windows, with no extra click required
-- Voice input support — microphone permission is requested at first launch; if denied, a native alert links directly to System Settings → Microphone
-- **Auto-update** — app checks for new versions on launch and shows a native update dialog; also available via the app menu → Check for Updates…
-- **Navigation guard** — external links open in Safari instead of inside the app; file:// URLs are blocked entirely
-- **Signed and notarized** — no Gatekeeper warning on first launch (v1.0.4+)
+- Native macOS app — Dock icon, standard menu bar, works like any Mac app
+- Loads Hermes Web UI in a WKWebView window (no browser needed, no Electron)
+- Direct mode for local Hermes instances, SSH tunnel mode for remote servers
+- Clipboard integration — paste text and images (⌘V) directly into the chat
+- File upload via the paperclip button
+- Preferences window (⌘,) with Test Connection button to verify before saving
+- Status bar showing live tunnel state (SSH mode) with one-click reconnect
+- macOS notifications when an AI response finishes while the window is in the background
+- Voice input — microphone permission requested on first use
+- External links open in Safari, not inside the app
+- Auto-update via Sparkle — checks for new versions on launch, or use app menu → Check for Updates…
+- Signed and notarized — no Gatekeeper warning on first launch
+
+---
 
 ## Configuration
 
-Open **Preferences** (⌘,) to configure:
+Open **Preferences** (⌘,):
 
 | Setting | Description |
 |---------|-------------|
 | **Connection Mode** | Direct (local) or SSH Tunnel |
-| **Target URL** | URL to load in the browser (default: `http://localhost:8787`) |
+| **Target URL** | URL to load (default: `http://localhost:8787`) |
 | **Username** | SSH username (SSH mode only) |
-| **Host** | SSH server hostname (SSH mode only) |
-| **Local Port** | Port on your machine for the tunnel (SSH mode only) |
-| **Remote Port** | Port on the server where hermes-webui runs (SSH mode only) |
+| **Host** | SSH server hostname or IP (SSH mode only) |
+| **Local Port** | Port on your Mac for the tunnel (SSH mode only) |
+| **Remote Port** | Port where Hermes Web UI listens on the server (SSH mode only) |
 
-Settings persist across launches via macOS UserDefaults.
+Settings persist across launches.
 
-## SSH Security
+---
 
-- SSH connections use `StrictHostKeyChecking=accept-new` — on the **first** connection to a new host, the host key is automatically added to `~/.ssh/known_hosts`. On all subsequent connections, a changed host key is rejected (protects against MITM attacks after the first connection)
-- `ExitOnForwardFailure=yes` — the tunnel fails immediately if port forwarding can't be established (no silent failures)
-- SSH key authentication is required — configure your SSH keys before using tunnel mode
+## SSH security
 
-## Requirements
+- `StrictHostKeyChecking=accept-new` — on the first connection to a new host, the key is added to `~/.ssh/known_hosts` automatically. On all later connections, a changed host key is rejected, protecting against MITM attacks after the first connect.
+- `ExitOnForwardFailure=yes` — the tunnel fails immediately if port forwarding can't be established rather than connecting silently with a broken tunnel.
+- SSH key authentication is required — password auth is not supported.
 
-- macOS 12+ (Monterey or later)
-- For building from source: Xcode Command Line Tools
-- For SSH tunnel mode: SSH key auth configured for your server
+---
+
+## Troubleshooting
+
+**Connection error or blank page on launch**
+Hermes Web UI isn't running. If you're using Direct mode, start it:
+```bash
+cd ~/hermes-webui-public && bash start.sh
+```
+Then open Preferences and click **Save & Reconnect**, or just relaunch the app.
+
+**"Unreachable" in Test Connection**
+- Direct mode: Hermes Web UI isn't running on the configured URL. Check the URL and port.
+- SSH mode: Hermes Web UI isn't running on the remote server, or SSH key auth isn't configured. Test with `ssh user@your-server` in Terminal first.
+
+**SSH tunnel shows "disconnected" immediately**
+- `ssh user@your-server` should work without a password in Terminal. If it prompts for one, set up SSH key auth first.
+- The remote port must match where Hermes Web UI is actually listening (default: 8787).
+
+**Voice input not working**
+macOS requires explicit permission. On first launch a system dialog appears — if you denied it:
+1. Open **System Settings → Privacy & Security → Microphone**
+2. Enable **Hermes Agent**
+3. Restart the app
+
+**Gatekeeper blocks the app**
+You're on a version older than v1.0.4. Download the latest release — v1.0.4 and later open without any warning.
+
+**App icon looks blurry after building from source**
+Run `killall Dock` to refresh the icon cache.
+
+---
 
 ## Architecture
 
 ```
 Sources/HermesAgent/
-├── main.swift                      — Entry point, signal handling (DispatchSource)
-├── AppDelegate.swift               — App lifecycle, menu, tunnel orchestration
-├── BrowserWindowController.swift   — WKWebView window, clipboard, status bar
-├── TunnelManager.swift             — SSH process management, port probe, monitoring
-├── PreferencesWindowController.swift — Settings UI with mode switching
-└── SplashWindowController.swift    — Launch splash screen
+├── main.swift                        — Entry point, signal handling
+├── AppDelegate.swift                 — App lifecycle, menu, Sparkle updater
+├── BrowserWindowController.swift     — WKWebView window, clipboard, notifications, error page
+├── TunnelManager.swift               — SSH process management, port probe, monitoring
+├── PreferencesWindowController.swift — Settings UI, test connection
+└── SplashWindowController.swift      — Launch splash screen
 ```
 
 | File | Purpose |
 |------|---------|
 | `Package.swift` | Swift Package Manager manifest (macOS 12+, Swift 5.9+) |
-| `build.sh` | Build script — compiles, bundles .app, converts icon, installs |
-| `Hermes Icon.png` | Source icon (converted to .icns at build time) |
-| `Tests/HermesAgentTests/` | Unit tests for validation and SSH argument logic — run with `swift test` |
+| `build.sh` | Build script — compiles, bundles .app, converts icon, installs to /Applications |
+| `scripts/release.sh` | Release helper — pushes main then tag separately to ensure CI fires |
+| `Tests/HermesAgentTests/` | Unit tests — run with `swift test` |
+
+---
 
 ## Releasing
 
-To cut a new signed+notarized release, run from a clean `main`:
+To cut a new signed and notarized release from a clean `main`:
 
 ```bash
-scripts/release.sh v1.0.6
+scripts/release.sh v1.0.9
 ```
 
-The script pushes `main` first, then pushes the tag as a separate `git push`. This is deliberate: if you push a new commit on `main` and its tag together (e.g. `git push --follow-tags`), GitHub sometimes delivers only one of the two push events and the Build and Release workflow silently doesn't fire. Splitting the pushes avoids that race — see the v1.0.5 incident where the tag landed on origin but neither CI workflow ran and the release had to be kicked off manually with `workflow_dispatch`.
+The script pushes `main` first, then the tag as a separate `git push`. This matters: if you push a commit and its tag together (e.g. `git push --follow-tags`), GitHub sometimes drops one of the push events and the Build and Release workflow silently doesn't fire. Splitting the pushes avoids that.
 
-If a tag push ever fails to trigger the workflow, you can still build that tag manually: **Actions → Build and Release macOS App → Run workflow → enter the tag**.
+If a tag push doesn't trigger the workflow within two minutes, kick it off manually: **Actions → Build and Release macOS App → Run workflow → enter the tag**.
 
-## Troubleshooting
-
-**"Connection refused" or blank page in Direct mode**
-Hermes Web UI is not running on the configured URL. Start it first:
-```bash
-cd ~/hermes-webui-public && bash start.sh
-```
-Then use **Preferences → Reconnect** (or ⌘, → Save & Reconnect) to reload.
-
-**Gatekeeper blocks the app on first launch**
-You're likely running a version older than v1.0.4. Upgrade to the latest release — v1.0.4+ is signed and notarized and opens without any warning. If you must use an older build, right-click → Open → Open, or run:
-```bash
-xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
-```
-
-**SSH tunnel shows "disconnected" immediately**
-- Verify SSH key auth works in Terminal: `ssh user@your-server`
-- Check that hermes-webui is running on the remote port you configured
-- The remote port must match where hermes-webui listens (default: 8787)
-
-**Voice input not working / microphone denied**
-macOS requires explicit permission. On first launch, the system dialog should appear automatically. If you denied it:
-1. Open **System Settings → Privacy & Security → Microphone**
-2. Enable the toggle for **Hermes Agent**
-3. Restart the app
-
-**App icon looks blurry**
-Run `killall Dock` after building from source to refresh the icon cache.
+---
 
 ## Credits
 
