@@ -109,13 +109,21 @@ jobs:
           DISPLAY_NAME="Hermes Agent"
           APP_BUNDLE="$DISPLAY_NAME.app"
           IDENTITY="Developer ID Application"
+          SPARKLE="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B"
 
-          # Sign nested frameworks and XPC services first
-          find "$APP_BUNDLE/Contents/Frameworks" -name "*.framework" -o -name "*.xpc" | while read f; do
-            codesign --force --options runtime --sign "$IDENTITY" "$f"
-          done
+          # Sign inside-out: XPC services first, then framework, then app.
+          # Signing in wrong order (framework before its nested XPCs) invalidates
+          # the framework signature and causes "nested code is modified or invalid".
 
-          # Sign the main app
+          # 1. XPC services inside Sparkle
+          codesign --force --options runtime --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
+          codesign --force --options runtime --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
+
+          # 2. Sparkle.framework itself
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+
+          # 3. Main app binary + bundle
           codesign \
             --force \
             --options runtime \
