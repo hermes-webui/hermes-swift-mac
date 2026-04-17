@@ -13,8 +13,22 @@ echo "→ Bundling $APP_BUNDLE..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+
+echo "→ Embedding Sparkle.framework..."
+SPARKLE_FW=$(find .build/artifacts -name "Sparkle.framework" -maxdepth 6 | head -1)
+if [ -z "$SPARKLE_FW" ]; then
+    echo "Error: Sparkle.framework not found in .build/artifacts — run 'swift package resolve' first"
+    exit 1
+fi
+cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
+
+# Fix rpath so the binary can find the embedded framework at runtime
+install_name_tool \
+    -add_rpath "@executable_path/../Frameworks" \
+    "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 echo "→ Converting icon..."
 ICONSET="AppIcon.iconset"
@@ -59,11 +73,17 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <false/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Hermes Agent uses the microphone for voice input in the chat interface.</string>
+    <key>SUPublicEDKey</key>
+    <string>daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY=</string>
+    <key>SUFeedURL</key>
+    <string>https://get-hermes.ai/appcast.xml</string>
 </dict>
 </plist>
 PLIST
 
 echo "→ Signing (ad-hoc)..."
+# Sign the framework first, then the app
+codesign --force --deep --sign - "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "→ Installing to Applications..."
@@ -73,7 +93,7 @@ cp -r "$APP_BUNDLE" "/Applications/$APP_BUNDLE"
 echo "→ Installed to /Applications/$APP_BUNDLE"
 echo "Note: icon cache refresh is optional and may require sudo if the old icon persists."
 echo "If needed, run these commands manually:"
-echo "  sudo find /private/var/folders -name \"com.apple.dock.iconcache\" -exec rm {} \; 2>/dev/null || true"
+echo "  sudo find /private/var/folders -name \"com.apple.dock.iconcache\" -exec rm {} \\; 2>/dev/null || true"
 echo "  sudo rm -rf /Library/Caches/com.apple.iconservices.store 2>/dev/null || true"
 echo "  killall Dock"
 echo "  killall Finder"
