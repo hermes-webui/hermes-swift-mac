@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v1.0.6] — 2026-04-17
 
 ### Added
 - macOS notifications (#8) — when a response finishes while the app window is in the background, a native macOS notification appears. Permission is requested on first trigger. Works via a debounced MutationObserver injected into the WebView.

@@ -396,7 +396,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         <div class="card">
           <div class="icon">⚠️</div>
           <h2>Cannot connect to Hermes</h2>
-          <p class=\"url\">\(safeURL)</p>
+          <p class="url">\(safeURL)</p>
           <p>\(tip)</p>
           <button onclick="window.location.reload()">Try Again</button>
         </div>
