@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var tunnelManager: TunnelManager!
     var splashWindow: SplashWindowController!
     var browserWindow: BrowserWindowController?
+    var errorWindow: ErrorWindowController?
     var preferencesWindow: PreferencesWindowController?
     var updaterController: SPUStandardUpdaterController!
 
@@ -78,6 +79,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         splashWindow.showWindow(nil)
         browserWindow?.close()
         browserWindow = nil
+        errorWindow?.close()
+        errorWindow = nil
         tunnelManager?.stop()
 
         if connectionMode == "ssh" {
@@ -86,11 +89,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let localPort = Int(defaults.string(forKey: "localPort") ?? defaultLocalPort) ?? 8787
             let remotePort = Int(defaults.string(forKey: "remotePort") ?? defaultRemotePort) ?? 8787
 
+            // Forward to 127.0.0.1 rather than "localhost" on the remote side.
+            // On some servers /etc/hosts maps "localhost" to ::1 first, so ssh
+            // would try [::1]:<port> and miss IPv4-only dev servers (hermes-webui
+            // binds to 127.0.0.1 by default), resulting in a connection reset.
             tunnelManager = TunnelManager(
                 user: user,
                 host: host,
                 localPort: localPort,
-                remoteHost: "localhost",
+                remoteHost: "127.0.0.1",
                 remotePort: remotePort
             )
 
@@ -100,36 +107,99 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             tunnelManager.start {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.splashWindow.close()
-                    let browser = BrowserWindowController(
-                        urlString: targetURL,
-                        title: self.appTitle,
-                        connectionMode: "ssh"
-                    )
-                    browser.onReconnect = { [weak self] in
-                        self?.startTunnel()
+                    if self.tunnelManager.status == .connected {
+                        self.openBrowser(
+                            targetURL: targetURL,
+                            mode: "ssh",
+                            sshHost: host,
+                            localPort: localPort
+                        )
+                    } else {
+                        self.showErrorWindow(targetURL: targetURL, mode: "ssh")
                     }
-                    browser.updateStatus(self.tunnelManager.status, host: host, port: localPort)
-                    browser.showWindow(nil)
-                    self.browserWindow = browser
                 }
             }
         } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.splashWindow.close()
-                let browser = BrowserWindowController(
-                    urlString: targetURL,
-                    title: self.appTitle,
-                    connectionMode: "direct"
-                )
-                browser.onReconnect = { [weak self] in
-                    self?.startTunnel()
+            preflightHTTP(urlString: targetURL) { reachable in
+                DispatchQueue.main.async {
+                    self.splashWindow.close()
+                    if reachable {
+                        self.openBrowser(
+                            targetURL: targetURL,
+                            mode: "direct",
+                            sshHost: nil,
+                            localPort: nil
+                        )
+                    } else {
+                        self.showErrorWindow(targetURL: targetURL, mode: "direct")
+                    }
                 }
-                browser.showWindow(nil)
-                self.browserWindow = browser
             }
         }
+    }
+
+    private func openBrowser(
+        targetURL: String, mode: String, sshHost: String?, localPort: Int?
+    ) {
+        let browser = BrowserWindowController(
+            urlString: targetURL,
+            title: appTitle,
+            connectionMode: mode
+        )
+        browser.onReconnect = { [weak self] in
+            self?.startTunnel()
+        }
+        browser.onNavigationFailed = { [weak self] in
+            self?.browserWindow?.close()
+            self?.browserWindow = nil
+            self?.showErrorWindow(targetURL: targetURL, mode: mode)
+        }
+        if mode == "ssh", let host = sshHost, let port = localPort {
+            browser.updateStatus(tunnelManager.status, host: host, port: port)
+        }
+        browser.showWindow(nil)
+        browserWindow = browser
+    }
+
+    private func showErrorWindow(targetURL: String, mode: String) {
+        browserWindow?.close()
+        browserWindow = nil
+        let err = ErrorWindowController(
+            appTitle: appTitle,
+            targetURL: targetURL,
+            mode: mode
+        )
+        err.onRetry = { [weak self] in
+            self?.errorWindow?.close()
+            self?.errorWindow = nil
+            self?.startTunnel()
+        }
+        err.onOpenPreferences = { [weak self] in
+            self?.openPreferences()
+        }
+        err.showWindow(nil)
+        err.window?.makeKeyAndOrderFront(nil)
+        errorWindow = err
+    }
+
+    /// Verify the target URL answers HTTP before opening the main browser.
+    /// Any HTTPURLResponse (including 4xx/5xx) counts as reachable — we only
+    /// fail on transport errors (connection refused, reset, timeout).
+    private func preflightHTTP(
+        urlString: String, timeout: TimeInterval = 4.0,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard let url = URL(string: urlString) else {
+            completion(false)
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "GET"
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            completion(response is HTTPURLResponse)
+        }.resume()
     }
 
     func setupMenu() {

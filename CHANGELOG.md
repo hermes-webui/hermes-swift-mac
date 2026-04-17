@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.0.9] — 2026-04-16
+
+### Fixed
+- **SSH tunnel silently broken on servers where `localhost` resolves to IPv6 first** — the tunnel forwarded to `localhost:<port>` on the remote side, but many Linux systems map `localhost` to `::1` ahead of `127.0.0.1` in `/etc/hosts`. Combined with the common case of dev servers binding only to IPv4 `127.0.0.1`, ssh would connect to `[::1]:<port>` and get "connection reset" on every request — while the local port check happily reported "Tunnel connected". The forward now always targets `127.0.0.1`, matching what most dev servers bind to.
+- **"Tunnel connected" shown even when the tunnel was end-to-end broken** — readiness check used to be a local TCP connect to the forwarded port, which ssh accepts immediately regardless of whether the far end is reachable. Replaced with an HTTP round-trip probe so the status reflects what the browser will actually experience.
+- **Try Again button on the connection-error screen led to a permanent white window** — the HTML error page was loaded with a nil base URL, so `window.location.reload()` reloaded `about:blank`. Replaced the WebView error page with a small native error window whose Try Again button re-runs the full connection flow.
+
+### Changed
+- **Connection failures show a compact native window instead of a full-size WebView error page.** The main browser window only opens after the app has verified the server responds — an HTTP preflight runs in direct mode, and in SSH mode the tunnel's HTTP probe gates the browser. If either fails, a small native "Cannot connect" window appears with Try Again and Preferences… buttons.
+
 ## [v1.0.8] — 2026-04-17
 
 ### Fixed

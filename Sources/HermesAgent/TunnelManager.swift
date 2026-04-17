@@ -101,15 +101,20 @@ class TunnelManager {
         }
     }
 
-    private func waitForPortForward(timeout: TimeInterval = 5.0, interval: TimeInterval = 0.5)
+    private func waitForPortForward(timeout: TimeInterval = 8.0, interval: TimeInterval = 0.5)
         -> Bool
     {
+        // A local TCP connect only proves ssh is holding the port — ssh always
+        // accepts immediately, even when the far end of the forward is broken
+        // (e.g. the remote service isn't running, or localhost-on-remote
+        // resolves to an address nothing is bound to). An HTTP round-trip is
+        // what actually tells us the tunnel is usable.
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if process?.isRunning != true {
                 return false
             }
-            if portIsListening(localPort) {
+            if httpProbeSucceeds(port: localPort, timeout: 1.5) {
                 return true
             }
             Thread.sleep(forTimeInterval: interval)
@@ -117,22 +122,25 @@ class TunnelManager {
         return false
     }
 
-    private func portIsListening(_ port: Int) -> Bool {
-        let sock = socket(AF_INET, SOCK_STREAM, 0)
-        guard sock >= 0 else { return false }
-        defer { close(sock) }
+    private func httpProbeSucceeds(port: Int, timeout: TimeInterval) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "GET"
 
-        var addr = sockaddr_in()
-        addr.sin_len = __uint8_t(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(port).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-
-        return withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                connect(sock, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
-            }
+        let semaphore = DispatchSemaphore(value: 0)
+        var reachable = false
+        let task = URLSession.shared.dataTask(with: request) { _, response, _ in
+            // Any HTTP response (including 4xx/5xx) means the tunnel delivered
+            // bytes end-to-end — that's what we're verifying here.
+            if response is HTTPURLResponse { reachable = true }
+            semaphore.signal()
         }
+        task.resume()
+        if semaphore.wait(timeout: .now() + timeout + 0.5) == .timedOut {
+            task.cancel()
+            return false
+        }
+        return reachable
     }
 
     private func setStatus(_ newStatus: TunnelStatus) {

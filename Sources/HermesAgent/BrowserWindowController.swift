@@ -33,6 +33,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private let appTitle: String
     private let connectionMode: String
     var onReconnect: (() -> Void)?
+    var onNavigationFailed: (() -> Void)?
 
     init(urlString: String, title: String, connectionMode: String = "direct") {
         self.urlString = urlString
@@ -344,95 +345,40 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
     }
 
-    // MARK: - Error page (connection failed or server error)
+    // MARK: - Navigation failure
 
-    // Fires when the network request itself fails (server not running, no route, etc.)
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
-        let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
-        let isSSH = mode == "ssh"
-
-        let safeURL = targetURL
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-
-        let tip = isSSH
-            ? "The SSH tunnel may not be established, or hermes-webui may not be running on the remote server."
-            : "Make sure hermes-webui is running. Start it with:<br><code>cd ~/hermes-webui-public &amp;&amp; bash start.sh</code>"
-
-        showErrorPage(in: webView, safeURL: safeURL, tip: tip)
+    // If the main-frame load can't reach hermes (server went away, tunnel
+    // dropped mid-session), bail back to the small native error window rather
+    // than painting an error page inside a full-size WebView.
+    func webView(
+        _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        let nsError = error as NSError
+        // NSURLErrorCancelled fires for link clicks we redirected to Safari —
+        // those aren't real failures, ignore them.
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            return
+        }
+        onNavigationFailed?()
     }
 
-    // Fires when the server responds but with an HTTP error (5xx, bad gateway, etc.)
-    // didFailProvisionalNavigation only catches network-level failures; this catches
-    // cases where the server is reachable but returns an error page.
-    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
-                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    // Server reachable but returned 5xx — the network preflight can't catch
+    // this since it only checks that *some* HTTP response came back. Surface
+    // it through the same native error window as a network failure.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
         if let httpResponse = navigationResponse.response as? HTTPURLResponse,
-           httpResponse.statusCode >= 500 {
+            httpResponse.statusCode >= 500
+        {
             decisionHandler(.cancel)
-            let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
-            let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
-            let isSSH = mode == "ssh"
-            let safeURL = targetURL
-                .replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-                .replacingOccurrences(of: "\"", with: "&quot;")
-            let tip = isSSH
-                ? "The server returned an error. Check that hermes-webui is running correctly on the remote server."
-                : "The server returned an error (HTTP \(httpResponse.statusCode)). Check the hermes-webui logs."
-            showErrorPage(in: webView, safeURL: safeURL, tip: tip)
+            onNavigationFailed?()
         } else {
             decisionHandler(.allow)
         }
-    }
-
-    private func showErrorPage(in webView: WKWebView, safeURL: String, tip: String) {
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <style>
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            display: flex; align-items: center; justify-content: center;
-            height: 100vh; margin: 0;
-            background: #f5f5f7; color: #1d1d1f;
-          }
-          .card {
-            background: white; border-radius: 16px;
-            padding: 40px 48px; max-width: 480px; text-align: center;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-          }
-          .icon { font-size: 48px; margin-bottom: 16px; }
-          h2 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
-          p { margin: 0 0 12px; color: #6e6e73; font-size: 14px; line-height: 1.5; }
-          code { background: #f5f5f7; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-          .url { font-size: 13px; color: #8e8e93; margin-bottom: 24px; }
-          button {
-            background: #0071e3; color: white; border: none;
-            padding: 10px 24px; border-radius: 8px; font-size: 15px;
-            cursor: pointer; font-family: inherit;
-          }
-          button:hover { background: #0077ed; }
-        </style>
-        </head>
-        <body>
-        <div class="card">
-          <div class="icon">⚠️</div>
-          <h2>Cannot connect to Hermes</h2>
-          <p class="url">\(safeURL)</p>
-          <p>\(tip)</p>
-          <button onclick="window.location.reload()">Try Again</button>
-        </div>
-        </body>
-        </html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
     }
 
     // MARK: - File upload
