@@ -2,22 +2,8 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymaurer.ch/developer/sparkle/rss/2.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
     <channel>
         <title>Hermes Agent Updates</title>
-        <link>https://get-hermes.ai/appcast.xml</link>
+        <link>https://hermes-webui.github.io/hermes-swift-mac/appcast.xml</link>
         <description>Hermes Agent changelog and update feed</description>
         <language>en</language>
-
-        <item>
-            <title>Version 1.0.3</title>
-            <pubDate>Thu, 16 Apr 2026 18:55:47 +0000</pubDate>
-            <sparkle:version>1.0.3</sparkle:version>
-            <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
-            <enclosure
-                url="https://github.com/hermes-webui/hermes-swift-mac/releases/download/v1.0.3/Hermes-Agent-v1.0.3.dmg"
-                sparkle:edSignature="PLACEHOLDER_SIGNATURE_1_0_3"
-                length="PLACEHOLDER_SIZE_1_0_3"
-                type="application/octet-stream"/>
-        </item>
-
     </channel>
 </rss>

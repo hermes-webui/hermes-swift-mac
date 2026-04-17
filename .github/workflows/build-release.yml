@@ -81,7 +81,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Hermes Agent uses the microphone for voice input in the chat interface.'" "$APP_BUNDLE/Contents/Info.plist"
           # Sparkle keys
           /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string 'daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY='" "$APP_BUNDLE/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :SUFeedURL string 'https://get-hermes.ai/appcast.xml'" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :SUFeedURL string 'https://hermes-webui.github.io/hermes-swift-mac/appcast.xml'" "$APP_BUNDLE/Contents/Info.plist"
 
       - name: Import Developer ID certificate
         env:
@@ -305,3 +305,33 @@ jobs:
             <!-- Sparkle appcast metadata (do not remove) -->
             <!-- sparkle:edSignature: ${{ env.SPARKLE_SIG }} -->
             <!-- sparkle:length: ${{ env.SPARKLE_SIZE }} -->
+
+      - name: Update appcast.xml on main
+        run: |
+          set -euo pipefail
+          PUBDATE=$(LC_ALL=C date -u +"%a, %d %b %Y %H:%M:%S +0000")
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${RELEASE_VERSION}/${DMG_NAME}"
+          NOTES_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${RELEASE_VERSION}"
+
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          VERSION="$RELEASE_VERSION" \
+            PUBDATE="$PUBDATE" \
+            RELEASE_URL="$RELEASE_URL" \
+            NOTES_URL="$NOTES_URL" \
+            SIG="$SPARKLE_SIG" \
+            SIZE="$SPARKLE_SIZE" \
+            python3 scripts/update_appcast.py
+
+          if git diff --quiet appcast.xml; then
+            echo "No appcast change to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "chore: add v${RELEASE_VERSION} to appcast.xml [skip ci]"
+          git push origin main

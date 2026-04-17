@@ -76,7 +76,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <key>SUPublicEDKey</key>
     <string>daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY=</string>
     <key>SUFeedURL</key>
-    <string>https://get-hermes.ai/appcast.xml</string>
+    <string>https://hermes-webui.github.io/hermes-swift-mac/appcast.xml</string>
 </dict>
 </plist>
 PLIST
