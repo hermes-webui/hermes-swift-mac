@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.0.8] — 2026-04-17
+
+### Fixed
+- **Test Connection false "Unreachable"** — clicking Test Connection against a running server often showed "✗ Unreachable" even when the server was working. Two bugs: the probe used a `HEAD` request (many dev servers return 405/501 for HEAD even when GET works), and the success range was restricted to HTTP 200–399 (so a 404 or 500 falsely showed as unreachable). Now uses GET and treats any HTTP response as reachable — only an actual network failure shows ✗.
+- **App icon rendered with a white chrome frame in the Dock** — the source PNG had a ~260 px opaque light-gray margin around the squircle, which showed up as a pale tile behind the icon on dark Dock backgrounds. Replaced with a properly cropped icon where the squircle fills the full canvas edge-to-edge and the area outside the rounded corners is genuinely transparent.
+
+### Changed
+- **Release notes now mirror the CHANGELOG.** The GitHub release body (and therefore Sparkle's "update available" dialog) now starts with a "What's changed" section auto-extracted from this file for the matching version tag, so users can see the actual list of fixes instead of generic download boilerplate. New releases without a CHANGELOG entry show a clear placeholder.
+
+## [v1.0.7] — 2026-04-17
+
+### Fixed
+- **Auto-update "error launching the installer"** — clicking **Install Update** from the Sparkle dialog failed with "An error occurred while launching the installer" because the app was shipping Sparkle's sandboxed XPC services (`Downloader.xpc`, `Installer.xpc`) despite not being sandboxed itself. Per Sparkle's own docs, XPC services are only for sandboxed apps; shipping them in a non-sandboxed app causes launchd to reject the XPC launch. With the XPCs removed from the embedded framework, Sparkle falls back to its in-process installer path, which is the supported flow for non-sandboxed apps.
+
 ## [v1.0.6] — 2026-04-17
 
 ### Added
