@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import UserNotifications
 import WebKit
 
 class BrowserWindow: NSWindow {
@@ -20,7 +21,7 @@ private class HermesWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
+class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var webView: HermesWebView!
     private var statusBar: NSView!
@@ -93,6 +94,35 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(speechSuppressionScript)
+
+        // Notify Swift when the AI finishes a response (streaming settled) and
+        // the window is in the background. Used for macOS notifications (#8).
+        // Debounces DOM mutations — fires 2s after last change when page is hidden.
+        let notifyScript = WKUserScript(
+            source: """
+                (function() {
+                    let debounceTimer = null;
+                    const observer = new MutationObserver(() => {
+                        clearTimeout(debounceTimer);
+                        debounceTimer = setTimeout(() => {
+                            if (document.hidden) {
+                                window.webkit.messageHandlers.hermesNotify.postMessage({
+                                    title: 'Hermes',
+                                    body: 'Your response is ready'
+                                });
+                            }
+                        }, 2000);
+                    });
+                    observer.observe(document.body, {
+                        childList: true, subtree: true, characterData: true
+                    });
+                })();
+                """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(notifyScript)
+        config.userContentController.add(self, name: "hermesNotify")
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
@@ -258,6 +288,86 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     @objc func reconnectTapped() {
         onReconnect?()
+    }
+
+    // MARK: - WKScriptMessageHandler (notifications)
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "hermesNotify",
+              let body = message.body as? [String: String],
+              let title = body["title"],
+              let text = body["body"]
+        else { return }
+
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = text
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: "hermes-response-\(Date().timeIntervalSince1970)",
+                content: content,
+                trigger: nil
+            )
+            center.add(request)
+        }
+    }
+
+    // MARK: - Error page (connection failed)
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
+        let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
+        let isSSH = mode == "ssh"
+
+        let tip = isSSH
+            ? "The SSH tunnel may not be established, or hermes-webui may not be running on the remote server."
+            : "Make sure hermes-webui is running. Start it with:<br><code>cd ~/hermes-webui-public &amp;&amp; bash start.sh</code>"
+
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex; align-items: center; justify-content: center;
+            height: 100vh; margin: 0;
+            background: #f5f5f7; color: #1d1d1f;
+          }
+          .card {
+            background: white; border-radius: 16px;
+            padding: 40px 48px; max-width: 480px; text-align: center;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+          }
+          .icon { font-size: 48px; margin-bottom: 16px; }
+          h2 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+          p { margin: 0 0 12px; color: #6e6e73; font-size: 14px; line-height: 1.5; }
+          code { background: #f5f5f7; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+          .url { font-size: 13px; color: #8e8e93; margin-bottom: 24px; }
+          button {
+            background: #0071e3; color: white; border: none;
+            padding: 10px 24px; border-radius: 8px; font-size: 15px;
+            cursor: pointer; font-family: inherit;
+          }
+          button:hover { background: #0077ed; }
+        </style>
+        </head>
+        <body>
+        <div class="card">
+          <div class="icon">⚠️</div>
+          <h2>Cannot connect to Hermes</h2>
+          <p class="url">\(targetURL)</p>
+          <p>\(tip)</p>
+          <button onclick="window.location.reload()">Try Again</button>
+        </div>
+        </body>
+        </html>
+        """
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
     // MARK: - File upload

@@ -8,6 +8,9 @@
     <!-- Microphone for voice input in the chat interface -->
     <key>com.apple.security.device.microphone</key>
     <true/>
+    <!-- User notifications for response-ready alerts -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
     <!-- No sandbox — required for SSH tunnel subprocess (NSTask) -->
 </dict>
 </plist>

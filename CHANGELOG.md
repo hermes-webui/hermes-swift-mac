@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- macOS notifications (#8) — when a response finishes while the app window is in the background, a native macOS notification appears. Permission is requested on first trigger. Works via a debounced MutationObserver injected into the WebView.
+- Test Connection button in Preferences (#4) — click to verify the target URL is reachable before saving. Shows "✓ Connected" or "✗ Unreachable" inline with a 5-second timeout. Works for both direct and SSH tunnel modes.
+
+### Fixed
+- White screen on failed connection (#12) — if the WebView cannot reach the server, a helpful error page now loads instead of a blank white screen. Shows the target URL, mode-specific guidance (direct: start command, SSH: tunnel check), and a Try Again button.
+
 ## [v1.0.4] — 2026-04-16
 
 ### Added
