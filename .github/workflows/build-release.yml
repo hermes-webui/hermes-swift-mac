@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v1.0.5)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,8 +17,13 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      # Unified tag name — works for both push-tag triggers and manual dispatch.
+      BUILD_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Resolve Swift packages
         run: swift package resolve
@@ -32,7 +43,7 @@ jobs:
           APP_NAME="HermesAgent"
           DISPLAY_NAME="Hermes Agent"
           APP_BUNDLE="$DISPLAY_NAME.app"
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${BUILD_TAG#v}"
 
           mkdir -p "$APP_BUNDLE/Contents/MacOS"
           mkdir -p "$APP_BUNDLE/Contents/Resources"
@@ -185,7 +196,7 @@ jobs:
         run: |
           DISPLAY_NAME="Hermes Agent"
           APP_BUNDLE="$DISPLAY_NAME.app"
-          DMG_NAME="Hermes-Agent-${GITHUB_REF_NAME}.dmg"
+          DMG_NAME="Hermes-Agent-${BUILD_TAG}.dmg"
 
           mkdir -p dmg-staging
           # ditto preserves framework symlinks correctly; cp -r mishandles them
@@ -277,7 +288,7 @@ jobs:
           # sign_update reads the private key from the SPARKLE_PRIVATE_KEY env var
           SIG=$(echo "$SPARKLE_PRIVATE_KEY" | sparkle-tools/bin/sign_update "${{ env.DMG_NAME }}" -f -)
           SIZE=$(stat -f%z "${{ env.DMG_NAME }}")
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${BUILD_TAG#v}"
 
           echo "SPARKLE_SIG=$SIG" >> $GITHUB_ENV
           echo "SPARKLE_SIZE=$SIZE" >> $GITHUB_ENV
