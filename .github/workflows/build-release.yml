@@ -329,7 +329,9 @@ jobs:
           NOTES_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${RELEASE_VERSION}"
 
           git fetch origin main
-          git checkout main
+          # Package.resolved is generated during the build step and left as an
+          # untracked file. Force-checkout discards it so we can switch to main cleanly.
+          git checkout -f main
           git pull --ff-only origin main
 
           VERSION="$RELEASE_VERSION" \
