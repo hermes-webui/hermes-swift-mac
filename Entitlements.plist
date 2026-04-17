@@ -8,9 +8,7 @@
     <!-- Microphone for voice input in the chat interface -->
     <key>com.apple.security.device.microphone</key>
     <true/>
-    <!-- User notifications for response-ready alerts -->
-    <key>com.apple.security.app-sandbox</key>
-    <false/>
-    <!-- No sandbox — required for SSH tunnel subprocess (NSTask) -->
+    <!-- No sandbox — required for SSH tunnel subprocess (NSTask).
+         com.apple.security.app-sandbox is omitted (implicitly false for non-MAS apps). -->
 </dict>
 </plist>

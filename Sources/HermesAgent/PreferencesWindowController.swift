@@ -253,8 +253,9 @@ class PreferencesWindowController: NSWindowController {
                     self.testResultLabel.stringValue = "✗ Unreachable"
                     self.testResultLabel.textColor = .systemRed
                 } else {
-                    self.testResultLabel.stringValue = "✓ Connected"
-                    self.testResultLabel.textColor = .systemGreen
+                    // No error and no HTTP response (e.g. non-HTTP scheme) — treat as unreachable
+                    self.testResultLabel.stringValue = "✗ Unreachable"
+                    self.testResultLabel.textColor = .systemRed
                 }
             }
         }.resume()

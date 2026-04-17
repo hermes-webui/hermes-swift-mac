@@ -97,24 +97,37 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         // Notify Swift when the AI finishes a response (streaming settled) and
         // the window is in the background. Used for macOS notifications (#8).
-        // Debounces DOM mutations — fires 2s after last change when page is hidden.
+        // Only fires on characterData mutations (actual text changes) that settle
+        // for 3s — ignores childList/structural churn to avoid false positives
+        // from scroll virtualisation, cursor blinks, etc.
         let notifyScript = WKUserScript(
             source: """
                 (function() {
                     let debounceTimer = null;
-                    const observer = new MutationObserver(() => {
+                    let totalCharsAdded = 0;
+                    const MIN_CHARS = 20;  // ignore tiny updates (timestamps, badges, etc.)
+                    const observer = new MutationObserver((mutations) => {
+                        let charsThisBatch = 0;
+                        for (const m of mutations) {
+                            if (m.type === 'characterData') {
+                                charsThisBatch += (m.target.nodeValue || '').length;
+                            }
+                        }
+                        if (charsThisBatch === 0) return;
+                        totalCharsAdded += charsThisBatch;
                         clearTimeout(debounceTimer);
                         debounceTimer = setTimeout(() => {
-                            if (document.hidden) {
+                            if (document.hidden && totalCharsAdded >= MIN_CHARS) {
                                 window.webkit.messageHandlers.hermesNotify.postMessage({
                                     title: 'Hermes',
                                     body: 'Your response is ready'
                                 });
                             }
-                        }, 2000);
+                            totalCharsAdded = 0;
+                        }, 3000);
                     });
                     observer.observe(document.body, {
-                        childList: true, subtree: true, characterData: true
+                        subtree: true, characterData: true
                     });
                 })();
                 """,
@@ -292,6 +305,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     // MARK: - WKScriptMessageHandler (notifications)
 
+    // Cache auth status so we don't call requestAuthorization on every message.
+    private var notificationAuthGranted: Bool? = nil
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "hermesNotify",
               let body = message.body as? [String: String],
@@ -300,18 +316,31 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         else { return }
 
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+
+        func postNotification() {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = text
             content.sound = .default
+            // Stable identifier coalesces rapid bursts — only the last one shows.
             let request = UNNotificationRequest(
-                identifier: "hermes-response-\(Date().timeIntervalSince1970)",
+                identifier: "hermes-response-ready",
                 content: content,
                 trigger: nil
             )
             center.add(request)
+        }
+
+        if let granted = notificationAuthGranted {
+            if granted { postNotification() }
+            return
+        }
+
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            DispatchQueue.main.async {
+                self?.notificationAuthGranted = granted
+                if granted { postNotification() }
+            }
         }
     }
 
@@ -321,6 +350,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let targetURL = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
         let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
         let isSSH = mode == "ssh"
+
+        // HTML-escape the URL before interpolating into the page
+        let safeURL = targetURL
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
 
         let tip = isSSH
             ? "The SSH tunnel may not be established, or hermes-webui may not be running on the remote server."
@@ -360,7 +396,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         <div class="card">
           <div class="icon">⚠️</div>
           <h2>Cannot connect to Hermes</h2>
-          <p class="url">\(targetURL)</p>
+          <p class=\"url\">\(safeURL)</p>
           <p>\(tip)</p>
           <button onclick="window.location.reload()">Try Again</button>
         </div>
