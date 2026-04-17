@@ -22,15 +22,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Initialize Sparkle updater — feed URL set in code (also in Info.plist as belt-and-suspenders)
+        // Initialize Sparkle updater — feed URL comes from SUFeedURL in Info.plist
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        if let feedURL = URL(string: "https://get-hermes.ai/appcast.xml") {
-            updaterController.updater.feedURL = feedURL
-        }
 
         setupMenu()
         seedDefaultsIfNeeded()
