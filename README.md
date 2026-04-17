@@ -11,12 +11,9 @@ A native macOS desktop app for [Hermes Web UI](https://github.com/nesquena/herme
 1. Go to [Releases](https://github.com/hermes-webui/hermes-swift-mac/releases)
 2. Download the latest `Hermes-Agent-vX.X.X.dmg`
 3. Open the DMG and drag **Hermes Agent** to your Applications folder
-4. **First launch:** macOS will show a Gatekeeper warning since the app is not code-signed. To open it:
-   - Right-click the app and choose **Open**, then click **Open** in the dialog, OR
-   - Run this in Terminal:
-     ```bash
-     xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
-     ```
+4. Launch the app — no Gatekeeper warning, no extra steps required
+
+> **Note:** v1.0.4 and later are signed with a Developer ID certificate and notarized by Apple. macOS will open them without any warning. If you downloaded an older version and see a Gatekeeper prompt, upgrade to the latest release.
 
 ### Option 2: Build from source
 
@@ -58,6 +55,9 @@ Switch between modes in **Preferences** (⌘,) → **Connection Mode**.
 - Edit menu with Undo, Redo, Cut, Copy, Paste, Select All
 - Reliable focus handling — clicks and keyboard shortcuts (Cmd+K etc.) work immediately after switching windows, with no extra click required
 - Voice input support — microphone permission is requested at first launch; if denied, a native alert links directly to System Settings → Microphone
+- **Auto-update** — app checks for new versions on launch and shows a native update dialog; also available via the app menu → Check for Updates…
+- **Navigation guard** — external links open in Safari instead of inside the app; file:// URLs are blocked entirely
+- **Signed and notarized** — no Gatekeeper warning on first launch (v1.0.4+)
 
 ## Configuration
 
@@ -115,7 +115,7 @@ cd ~/hermes-webui-public && bash start.sh
 Then use **Preferences → Reconnect** (or ⌘, → Save & Reconnect) to reload.
 
 **Gatekeeper blocks the app on first launch**
-This is expected — the app is not code-signed. Right-click → Open → Open, or run:
+You're likely running a version older than v1.0.4. Upgrade to the latest release — v1.0.4+ is signed and notarized and opens without any warning. If you must use an older build, right-click → Open → Open, or run:
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Hermes Agent.app"
 ```
