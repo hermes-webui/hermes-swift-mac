@@ -112,12 +112,16 @@ jobs:
           SPARKLE="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B"
 
           # Sign inside-out: XPC services first, then framework, then app.
-          # Signing in wrong order (framework before its nested XPCs) invalidates
-          # the framework signature and causes "nested code is modified or invalid".
+          # Preserve original entitlements on Sparkle's XPC services — stripping them
+          # causes Apple notarization to reject with "Invalid".
 
-          # 1. XPC services inside Sparkle
-          codesign --force --options runtime --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
-          codesign --force --options runtime --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
+          # 1. XPC services — preserve their entitlements
+          codesign --force --options runtime \
+            --preserve-metadata=entitlements \
+            --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
+          codesign --force --options runtime \
+            --preserve-metadata=entitlements \
+            --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
 
           # 2. Sparkle.framework itself
           codesign --force --options runtime --sign "$IDENTITY" \
@@ -153,23 +157,46 @@ jobs:
           rm -rf dmg-staging
           echo "DMG_NAME=$DMG_NAME" >> $GITHUB_ENV
 
-      - name: Sign DMG
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          codesign --force --sign "Developer ID Application" "${{ env.DMG_NAME }}"
-
       - name: Notarize DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          xcrun notarytool submit "${{ env.DMG_NAME }}" \
+          # Submit to Apple notary service — no need to codesign the DMG itself,
+          # only the .app bundle inside needs to be signed.
+          SUBMISSION_ID=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait \
+            --output-format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])")
+
+          echo "NOTARIZATION_ID=$SUBMISSION_ID" >> $GITHUB_ENV
+
+          # Re-run to check final status and print it
+          xcrun notarytool info "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+
+      - name: Fetch notarization log (always, for diagnostics)
+        if: always()
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "${{ env.NOTARIZATION_ID }}" ]; then
+            xcrun notarytool log "${{ env.NOTARIZATION_ID }}" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              notarization-log.json || true
+            cat notarization-log.json || echo "No log available"
+          else
+            echo "No notarization ID available — skipping log fetch"
+          fi
 
       - name: Staple notarization ticket
         run: |
