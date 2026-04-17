@@ -285,8 +285,10 @@ jobs:
           mkdir -p sparkle-tools
           tar -xf sparkle-tools.tar.xz -C sparkle-tools
 
-          # sign_update reads the private key from the SPARKLE_PRIVATE_KEY env var
-          SIG=$(echo "$SPARKLE_PRIVATE_KEY" | sparkle-tools/bin/sign_update "${{ env.DMG_NAME }}" -f -)
+          # sign_update prints a full `sparkle:edSignature="..." length="N"` line.
+          # Extract just the edSignature value so it can be used as an attribute value.
+          SIG_OUTPUT=$(echo "$SPARKLE_PRIVATE_KEY" | sparkle-tools/bin/sign_update "${{ env.DMG_NAME }}" -f -)
+          SIG=$(echo "$SIG_OUTPUT" | sed -E 's/.*edSignature="([^"]+)".*/\1/')
           SIZE=$(stat -f%z "${{ env.DMG_NAME }}")
           VERSION="${BUILD_TAG#v}"
 

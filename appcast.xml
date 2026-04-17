@@ -15,7 +15,7 @@
             <sparkle:releaseNotesLink>https://github.com/hermes-webui/hermes-swift-mac/releases/tag/v1.0.5</sparkle:releaseNotesLink>
             <enclosure
                 url="https://github.com/hermes-webui/hermes-swift-mac/releases/download/v1.0.5/Hermes-Agent-v1.0.5.dmg"
-                sparkle:edSignature="sparkle:edSignature="yzTSAM1tF2lDpe3UjRlw9ZSfYNqLSet8d/sy10/whSpyC9upcOSqwvb1Nnahm06UngiVfAky9FEqjX0zkEHODQ==" length="4658234""
+                sparkle:edSignature="yzTSAM1tF2lDpe3UjRlw9ZSfYNqLSet8d/sy10/whSpyC9upcOSqwvb1Nnahm06UngiVfAky9FEqjX0zkEHODQ=="
                 length="4658234"
                 type="application/octet-stream"/>
         </item>
