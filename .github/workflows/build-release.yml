@@ -295,26 +295,36 @@ jobs:
           echo "Sparkle signature: $SIG"
           echo "DMG size: $SIZE bytes"
 
+      - name: Build release body
+        run: |
+          set -euo pipefail
+          {
+            echo "## What's changed"
+            echo
+            python3 scripts/extract_changelog.py "$BUILD_TAG"
+            echo
+            echo "---"
+            echo
+            echo "Download \`${DMG_NAME}\`, open the DMG, and drag **Hermes Agent** to your Applications folder."
+            echo
+            echo "This release is signed with a Developer ID certificate and notarized by Apple. macOS will open it without any Gatekeeper warning."
+            echo
+            echo "**Requirements:** macOS 12+ (Monterey or later)"
+            echo
+            echo "<!-- Sparkle appcast metadata (do not remove) -->"
+            echo "<!-- sparkle:edSignature: ${SPARKLE_SIG} -->"
+            echo "<!-- sparkle:length: ${SPARKLE_SIZE} -->"
+          } > release-body.md
+          echo "=== release-body.md ==="
+          cat release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.BUILD_TAG }}
           files: ${{ env.DMG_NAME }}
+          body_path: release-body.md
           generate_release_notes: true
-          body: |
-            ## Hermes Agent for macOS — ${{ env.RELEASE_VERSION }}
-
-            Download `${{ env.DMG_NAME }}`, open the DMG, and drag **Hermes Agent** to your Applications folder.
-
-            This release is signed with a Developer ID certificate and notarized by Apple.
-            macOS will open it without any Gatekeeper warning.
-
-            **Requirements:** macOS 12+ (Monterey or later)
-
-            ---
-            <!-- Sparkle appcast metadata (do not remove) -->
-            <!-- sparkle:edSignature: ${{ env.SPARKLE_SIG }} -->
-            <!-- sparkle:length: ${{ env.SPARKLE_SIZE }} -->
 
       - name: Update appcast.xml on main
         run: |
