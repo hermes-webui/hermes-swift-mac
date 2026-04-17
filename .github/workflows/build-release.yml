@@ -300,6 +300,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.BUILD_TAG }}
           files: ${{ env.DMG_NAME }}
           generate_release_notes: true
           body: |
