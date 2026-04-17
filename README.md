@@ -105,6 +105,18 @@ Sources/HermesAgent/
 | `Hermes Icon.png` | Source icon (converted to .icns at build time) |
 | `Tests/HermesAgentTests/` | Unit tests for validation and SSH argument logic — run with `swift test` |
 
+## Releasing
+
+To cut a new signed+notarized release, run from a clean `main`:
+
+```bash
+scripts/release.sh v1.0.6
+```
+
+The script pushes `main` first, then pushes the tag as a separate `git push`. This is deliberate: if you push a new commit on `main` and its tag together (e.g. `git push --follow-tags`), GitHub sometimes delivers only one of the two push events and the Build and Release workflow silently doesn't fire. Splitting the pushes avoids that race — see the v1.0.5 incident where the tag landed on origin but neither CI workflow ran and the release had to be kicked off manually with `workflow_dispatch`.
+
+If a tag push ever fails to trigger the workflow, you can still build that tag manually: **Actions → Build and Release macOS App → Run workflow → enter the tag**.
+
 ## Troubleshooting
 
 **"Connection refused" or blank page in Direct mode**

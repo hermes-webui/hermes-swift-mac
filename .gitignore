@@ -4,3 +4,6 @@
 *.icns
 .DS_Store
 *.dmg
+*.zip
+.claude/
+dmg-staging/
