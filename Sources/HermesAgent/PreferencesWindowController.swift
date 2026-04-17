@@ -11,6 +11,7 @@ class PreferencesWindowController: NSWindowController {
     private var localPortField: NSTextField!
     private var remotePortField: NSTextField!
     private var targetURLField: NSTextField!
+    private var testResultLabel: NSTextField!
 
     init() {
         let window = NSWindow(
@@ -137,6 +138,17 @@ class PreferencesWindowController: NSWindowController {
         saveBtn.keyEquivalent = "\r"
         saveBtn.frame = NSRect(x: 362, y: 16, width: 100, height: 32)
         content.addSubview(saveBtn)
+
+        let testBtn = NSButton(title: "Test Connection", target: self, action: #selector(testConnection))
+        testBtn.bezelStyle = .rounded
+        testBtn.frame = NSRect(x: 24, y: 16, width: 130, height: 32)
+        content.addSubview(testBtn)
+
+        testResultLabel = NSTextField(labelWithString: "")
+        testResultLabel.font = NSFont.systemFont(ofSize: 11)
+        testResultLabel.textColor = .secondaryLabelColor
+        testResultLabel.frame = NSRect(x: 164, y: 22, width: 90, height: 16)
+        content.addSubview(testResultLabel)
     }
 
     @objc func save() {
@@ -211,6 +223,42 @@ class PreferencesWindowController: NSWindowController {
         alert.messageText = "Invalid value"
         alert.informativeText = message
         alert.runModal()
+    }
+
+    @objc func testConnection() {
+        let urlString = targetURLField.stringValue.isEmpty
+            ? (UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787")
+            : targetURLField.stringValue
+
+        guard let url = URL(string: urlString) else {
+            testResultLabel.stringValue = "Invalid URL"
+            testResultLabel.textColor = .systemRed
+            return
+        }
+
+        testResultLabel.stringValue = "Testing…"
+        testResultLabel.textColor = .secondaryLabelColor
+
+        var request = URLRequest(url: url, timeoutInterval: 5)
+        request.httpMethod = "HEAD"
+
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let httpResponse = response as? HTTPURLResponse,
+                   (200...399).contains(httpResponse.statusCode) {
+                    self.testResultLabel.stringValue = "✓ Connected"
+                    self.testResultLabel.textColor = .systemGreen
+                } else if error != nil {
+                    self.testResultLabel.stringValue = "✗ Unreachable"
+                    self.testResultLabel.textColor = .systemRed
+                } else {
+                    // No error and no HTTP response (e.g. non-HTTP scheme) — treat as unreachable
+                    self.testResultLabel.stringValue = "✗ Unreachable"
+                    self.testResultLabel.textColor = .systemRed
+                }
+            }
+        }.resume()
     }
 
     @objc func cancel() {

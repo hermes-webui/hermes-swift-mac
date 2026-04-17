@@ -90,6 +90,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true"               "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false"                          "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Hermes Agent uses the microphone for voice input in the chat interface.'" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSUserNotificationUsageDescription string 'Hermes Agent notifies you when an AI response is ready while the window is in the background.'" "$APP_BUNDLE/Contents/Info.plist"
           # Sparkle keys
           /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string 'daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY='" "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :SUFeedURL string 'https://hermes-webui.github.io/hermes-swift-mac/appcast.xml'" "$APP_BUNDLE/Contents/Info.plist"
