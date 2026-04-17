@@ -111,23 +111,38 @@ jobs:
           IDENTITY="Developer ID Application"
           SPARKLE="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B"
 
-          # Sign inside-out: XPC services first, then framework, then app.
-          # Preserve original entitlements on Sparkle's XPC services — stripping them
-          # causes Apple notarization to reject with "Invalid".
+          # Sign inside-out: every nested Mach-O / bundle in Sparkle.framework
+          # must be re-signed with our Developer ID before the framework itself.
+          # Preserve original entitlements on Sparkle's XPC services — stripping
+          # them causes Apple notarization to reject with "Invalid".
 
-          # 1. XPC services — preserve their entitlements
+          # 1. Updater.app (nested app bundle): inner binary then bundle
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$SPARKLE/Updater.app/Contents/MacOS/Updater"
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$SPARKLE/Updater.app"
+
+          # 2. XPC services: inner binaries first, then bundles (preserve entitlements on bundles)
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$SPARKLE/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
           codesign --force --options runtime \
             --preserve-metadata=entitlements \
             --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$SPARKLE/XPCServices/Installer.xpc/Contents/MacOS/Installer"
           codesign --force --options runtime \
             --preserve-metadata=entitlements \
             --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
 
-          # 2. Sparkle.framework itself
+          # 3. Standalone Autoupdate helper binary
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "$SPARKLE/Autoupdate"
+
+          # 4. Sparkle.framework itself
           codesign --force --options runtime --sign "$IDENTITY" \
             "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
-          # 3. Main app binary + bundle
+          # 5. Main app binary + bundle
           codesign \
             --force \
             --options runtime \
