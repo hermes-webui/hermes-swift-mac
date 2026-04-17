@@ -25,6 +25,12 @@ if [ -z "$SPARKLE_FW" ]; then
 fi
 cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
 
+# Non-sandboxed apps MUST remove Sparkle's XPC services (per Sparkle docs).
+# Shipping them causes "error launching the installer" on auto-update because
+# Sparkle tries to use them but launchd rejects the XPC launch.
+rm -rf "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices"
+rm -f  "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/XPCServices"
+
 # Fix rpath so the binary can find the embedded framework at runtime
 install_name_tool \
     -add_rpath "@executable_path/../Frameworks" \

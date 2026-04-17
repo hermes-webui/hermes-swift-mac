@@ -57,6 +57,13 @@ jobs:
           SPARKLE_FW="$SPARKLE_XCFRAMEWORK/macos-arm64_x86_64/Sparkle.framework"
           cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
 
+          # Non-sandboxed apps MUST remove Sparkle's XPC services. Per Sparkle
+          # docs, XPC services are only for sandboxed apps; shipping them in a
+          # non-sandboxed app causes "error launching the installer" on update
+          # because Sparkle tries to use them but launchd rejects the XPC launch.
+          rm -rf "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices"
+          rm -f  "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/XPCServices"
+
           # Fix rpath so the binary finds the embedded framework
           install_name_tool \
             -add_rpath "@executable_path/../Frameworks" \
@@ -143,8 +150,8 @@ jobs:
 
           # Sign inside-out: every nested Mach-O / bundle in Sparkle.framework
           # must be re-signed with our Developer ID before the framework itself.
-          # Preserve original entitlements on Sparkle's XPC services — stripping
-          # them causes Apple notarization to reject with "Invalid".
+          # XPC services are removed above (non-sandboxed app), so only
+          # Updater.app, Autoupdate, and Sparkle itself need re-signing.
           # --timestamp forces codesign to embed a secure timestamp from Apple's
           # TSA, which notarization requires (default behavior is unreliable in CI).
 
@@ -154,27 +161,15 @@ jobs:
           codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/Updater.app"
 
-          # 2. XPC services: inner binaries first, then bundles (preserve entitlements on bundles)
-          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
-            "$SPARKLE/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
-          codesign --force --timestamp --options runtime \
-            --preserve-metadata=entitlements \
-            --sign "$IDENTITY" "$SPARKLE/XPCServices/Downloader.xpc"
-          codesign --force --timestamp --options runtime --sign "$IDENTITY" \
-            "$SPARKLE/XPCServices/Installer.xpc/Contents/MacOS/Installer"
-          codesign --force --timestamp --options runtime \
-            --preserve-metadata=entitlements \
-            --sign "$IDENTITY" "$SPARKLE/XPCServices/Installer.xpc"
-
-          # 3. Standalone Autoupdate helper binary
+          # 2. Standalone Autoupdate helper binary
           codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$SPARKLE/Autoupdate"
 
-          # 4. Sparkle.framework itself
+          # 3. Sparkle.framework itself
           codesign --force --timestamp --options runtime --sign "$IDENTITY" \
             "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
-          # 5. Main app binary + bundle
+          # 4. Main app binary + bundle
           codesign \
             --force \
             --timestamp \
