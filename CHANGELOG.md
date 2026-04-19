@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.1.0] — 2026-04-19
+
+### Added
+- **Launch at login** — Preferences now includes a "Launch at login" checkbox (macOS 13+, SMAppService). Correctly handles `.requiresApproval` state and shows a System Settings nudge. Disabled with an inline note on macOS 12. (fixes #3)
+- **View zoom — Cmd+/Cmd− keyboard shortcuts** — new View menu with Zoom In, Zoom Out, and Actual Size. Pinch-to-zoom was already enabled; this adds keyboard control. (fixes #24)
+- **Connection status in window title** — direct-mode window title now shows the active backend host and a live indicator (● connected / ○ offline). A 30-second health poll detects when the backend goes away without a full page reload. (fixes #29)
+
+### Fixed
+- **Non-localhost URLs silently failing** — plain `http://` to Tailscale IPs, LAN addresses, and custom hostnames was blocked by App Transport Security in WKWebView. Added `NSAllowsArbitraryLoadsInWebContent` to Info.plist (both `build.sh` and CI workflow). URLSession (used for connection preflight) keeps default ATS restrictions. (fixes #25)
+- **Dark mode white flash on startup** — WKWebView rendered white before the dark theme loaded. Set `underPageBackgroundColor` to `.windowBackgroundColor` (macOS 12+) and added a `documentStart` userScript to set the HTML background before first paint. (fixes #23)
+- **Error screen didn't name the backend repo** — first-time users who hit "Cannot connect" had no way to find the backend. Added a clickable "github.com/nesquena/hermes-webui" link to the error screen in direct mode. (fixes #27)
+
 ## [v1.0.9] — 2026-04-16
 
 ### Fixed

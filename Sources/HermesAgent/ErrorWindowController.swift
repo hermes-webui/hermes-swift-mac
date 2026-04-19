@@ -11,7 +11,7 @@ class ErrorWindowController: NSWindowController {
 
     init(appTitle: String, targetURL: String, mode: String) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -25,14 +25,14 @@ class ErrorWindowController: NSWindowController {
         let icon = NSTextField(labelWithString: "⚠️")
         icon.font = NSFont.systemFont(ofSize: 40)
         icon.alignment = .center
-        icon.frame = NSRect(x: 0, y: 240, width: 460, height: 50)
+        icon.frame = NSRect(x: 0, y: 280, width: 460, height: 50)
         icon.autoresizingMask = [.width]
         content.addSubview(icon)
 
         let title = NSTextField(labelWithString: "Cannot connect to Hermes")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         title.alignment = .center
-        title.frame = NSRect(x: 0, y: 210, width: 460, height: 24)
+        title.frame = NSRect(x: 0, y: 250, width: 460, height: 24)
         title.autoresizingMask = [.width]
         content.addSubview(title)
 
@@ -40,7 +40,7 @@ class ErrorWindowController: NSWindowController {
         urlLabel.font = NSFont.systemFont(ofSize: 12)
         urlLabel.textColor = .secondaryLabelColor
         urlLabel.alignment = .center
-        urlLabel.frame = NSRect(x: 0, y: 186, width: 460, height: 18)
+        urlLabel.frame = NSRect(x: 0, y: 226, width: 460, height: 18)
         urlLabel.autoresizingMask = [.width]
         content.addSubview(urlLabel)
 
@@ -51,9 +51,27 @@ class ErrorWindowController: NSWindowController {
         desc.font = NSFont.systemFont(ofSize: 12)
         desc.textColor = .secondaryLabelColor
         desc.alignment = .center
-        desc.frame = NSRect(x: 40, y: 100, width: 380, height: 72)
+        desc.frame = NSRect(x: 40, y: 140, width: 380, height: 72)
         desc.autoresizingMask = [.width]
         content.addSubview(desc)
+
+        // "Don't have it yet?" link — only shown in direct mode for new users
+        if mode == "direct" {
+            let getLabel = NSTextField(labelWithString: "Don't have it yet?")
+            getLabel.font = NSFont.systemFont(ofSize: 12)
+            getLabel.textColor = .secondaryLabelColor
+            getLabel.alignment = .center
+            getLabel.frame = NSRect(x: 40, y: 110, width: 180, height: 18)
+            content.addSubview(getLabel)
+
+            let getBtn = NSButton(title: "github.com/nesquena/hermes-webui", target: self, action: #selector(openRepoURL))
+            getBtn.bezelStyle = .inline
+            getBtn.isBordered = false
+            getBtn.contentTintColor = NSColor.linkColor
+            getBtn.font = NSFont.systemFont(ofSize: 12)
+            getBtn.frame = NSRect(x: 220, y: 108, width: 210, height: 20)
+            content.addSubview(getBtn)
+        }
 
         let retryBtn = NSButton(title: "Try Again", target: self, action: #selector(retryTapped))
         retryBtn.bezelStyle = .rounded
@@ -72,4 +90,10 @@ class ErrorWindowController: NSWindowController {
 
     @objc private func retryTapped() { onRetry?() }
     @objc private func prefsTapped() { onOpenPreferences?() }
+
+    @objc private func openRepoURL() {
+        if let url = URL(string: "https://github.com/nesquena/hermes-webui") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }

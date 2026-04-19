@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 class PreferencesWindowController: NSWindowController {
 
@@ -12,10 +13,11 @@ class PreferencesWindowController: NSWindowController {
     private var remotePortField: NSTextField!
     private var targetURLField: NSTextField!
     private var testResultLabel: NSTextField!
+    private var launchAtLoginCheckbox: NSButton!
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -30,7 +32,7 @@ class PreferencesWindowController: NSWindowController {
 
     private func buildUI() {
         let content = window!.contentView!
-        var y: CGFloat = 420
+        var y: CGFloat = 460
 
         func sectionHeader(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
@@ -127,6 +129,27 @@ class PreferencesWindowController: NSWindowController {
         targetURLField = row(
             "Target URL", placeholder: "http://localhost:8787", defaultsKey: "targetURL")
 
+        // Launch at Login (fix #3) — uses SMAppService (macOS 13+)
+        launchAtLoginCheckbox = NSButton(
+            checkboxWithTitle: "Launch at login",
+            target: self,
+            action: #selector(toggleLaunchAtLogin(_:)))
+        launchAtLoginCheckbox.frame = NSRect(x: 164, y: y, width: 260, height: 22)
+        content.addSubview(launchAtLoginCheckbox)
+
+        if #available(macOS 13.0, *) {
+            launchAtLoginCheckbox.state =
+                SMAppService.mainApp.status == .enabled ? .on : .off
+        } else {
+            launchAtLoginCheckbox.isEnabled = false
+            let note = NSTextField(labelWithString: "Requires macOS 13 or later")
+            note.font = NSFont.systemFont(ofSize: 11)
+            note.textColor = .secondaryLabelColor
+            note.frame = NSRect(x: 294, y: y, width: 180, height: 22)
+            content.addSubview(note)
+        }
+        y -= 36
+
         // Buttons
         let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelBtn.bezelStyle = .rounded
@@ -150,6 +173,40 @@ class PreferencesWindowController: NSWindowController {
         testResultLabel.frame = NSRect(x: 164, y: 22, width: 90, height: 16)
         content.addSubview(testResultLabel)
     }
+
+    // MARK: - Launch at login (fix #3)
+
+    @objc func toggleLaunchAtLogin(_ sender: NSButton) {
+        guard #available(macOS 13.0, *) else { return }
+        let service = SMAppService.mainApp
+        let wantEnabled = sender.state == .on
+        Task { @MainActor in
+            do {
+                if wantEnabled {
+                    if service.status != .enabled { try service.register() }
+                } else {
+                    if service.status == .enabled { try await service.unregister() }
+                }
+                // Re-sync UI to authoritative status (handles .requiresApproval)
+                sender.state = (service.status == .enabled) ? .on : .off
+                if service.status == .requiresApproval {
+                    let alert = NSAlert()
+                    alert.messageText = "Approval required"
+                    alert.informativeText =
+                        "Enable Hermes in System Settings → General → Login Items."
+                    alert.runModal()
+                }
+            } catch {
+                sender.state = (service.status == .enabled) ? .on : .off
+                let alert = NSAlert()
+                alert.messageText = "Couldn't update Launch at Login"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
+    }
+
+    // MARK: - Save
 
     @objc func save() {
         let connectionMode = connectionModeSegment.selectedSegment == 0 ? "direct" : "ssh"
