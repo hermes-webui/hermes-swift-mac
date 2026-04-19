@@ -25,6 +25,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     private var webView: HermesWebView!
     private var statusBar: NSView!
+
+    /// Exposes the WKWebView for zoom operations called from AppDelegate menu actions.
+    /// Return type is WKWebView (not the private HermesWebView subclass) so Swift's
+    /// access-level rules are satisfied — callers only need .magnification anyway.
+    var webViewForZoom: WKWebView? { webView }
     private var separator: NSView!
     private var statusDot: NSView!
     private var statusLabel: NSTextField!
@@ -34,6 +39,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private let connectionMode: String
     var onReconnect: (() -> Void)?
     var onNavigationFailed: (() -> Void)?
+
+    // Health check timer for direct mode — polls /health every 30s and
+    // reflects status in the window title (fix #29).
+    private var healthTimer: Timer?
+    private var isHealthy: Bool = true
 
     init(urlString: String, title: String, connectionMode: String = "direct") {
         self.urlString = urlString
@@ -48,6 +58,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         window.title = title
         window.center()
+        // Fix #23: set native window background to dark before content loads,
+        // so there's no white frame visible while WKWebView is initializing.
+        window.backgroundColor = .windowBackgroundColor
         super.init(window: window)
 
         window.onPaste = { [weak self] in
@@ -145,6 +158,31 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsMagnification = true
+
+        // Fix #23: prevent white flash on startup in dark mode (FOUC).
+        // Set the WKWebView background to match the system window background
+        // before the first paint — otherwise the WebView renders white while
+        // the dark theme is still loading from the server.
+        if #available(macOS 12.0, *) {
+            webView.underPageBackgroundColor = .windowBackgroundColor
+        }
+        // Fallback for older OS: inject a documentStart script that sets the
+        // background immediately before the first paint.
+        let darkModeScript = WKUserScript(
+            source: """
+                (function() {
+                    var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    if (isDark) {
+                        document.documentElement.style.background = '#1a1a1a';
+                        document.body && (document.body.style.background = '#1a1a1a');
+                    }
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(darkModeScript)
+
         contentView.addSubview(webView)
 
         // Only add status bar in SSH mode
@@ -187,6 +225,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         if let url = URL(string: urlString) {
             webView.load(URLRequest(url: url))
+        }
+
+        // Start health polling for direct mode (fix #29)
+        if connectionMode == "direct" {
+            updateWindowTitle(healthy: true)
+            startHealthCheck()
         }
     }
 
@@ -278,6 +322,46 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     }
 
     // MARK: - Status
+
+    // MARK: Health check (direct mode, fix #29)
+
+    private func startHealthCheck() {
+        let healthURL = urlString.hasSuffix("/") ? "\(urlString)health" : "\(urlString)/health"
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.pingHealth(urlString: healthURL)
+        }
+    }
+
+    func stopHealthCheck() {
+        healthTimer?.invalidate()
+        healthTimer = nil
+    }
+
+    private func pingHealth(urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        var request = URLRequest(url: url, timeoutInterval: 5)
+        request.httpMethod = "GET"
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
+            let healthy = response is HTTPURLResponse
+            DispatchQueue.main.async {
+                guard let self = self, healthy != self.isHealthy else { return }
+                self.isHealthy = healthy
+                self.updateWindowTitle(healthy: healthy)
+            }
+        }.resume()
+    }
+
+    private func updateWindowTitle(healthy: Bool) {
+        let hostDisplay: String
+        if let url = URL(string: urlString), let host = url.host {
+            let port = url.port.map { ":\($0)" } ?? ""
+            hostDisplay = "\(host)\(port)"
+        } else {
+            hostDisplay = urlString
+        }
+        let dot = healthy ? "●" : "○"
+        window?.title = "\(appTitle)  \(dot) \(hostDisplay)"
+    }
 
     func updateStatus(_ status: TunnelStatus, host: String, port: Int) {
         guard connectionMode == "ssh" else { return }
@@ -455,6 +539,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Ensure the WebView holds keyboard focus whenever the window is active,
         // so shortcuts like Cmd+K reach JavaScript without requiring an extra click.
         webView.becomeFirstResponder()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        stopHealthCheck()
     }
 
     // MARK: - Microphone / camera permissions

@@ -248,11 +248,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(
             withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
 
+        let viewMenuItem = NSMenuItem()
+        menuBar.addItem(viewMenuItem)
+        let viewMenu = NSMenu(title: "View")
+        viewMenuItem.submenu = viewMenu
+        viewMenu.addItem(
+            withTitle: "Zoom In", action: #selector(zoomIn), keyEquivalent: "+")
+        viewMenu.addItem(
+            withTitle: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-")
+        viewMenu.addItem(
+            withTitle: "Actual Size", action: #selector(zoomReset), keyEquivalent: "0")
+
         NSApp.mainMenu = menuBar
     }
 
     @objc func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+    }
+
+    // MARK: - View zoom (fix #24)
+
+    @objc func zoomIn() {
+        guard let webView = browserWindow?.webViewForZoom else { return }
+        webView.magnification = min(webView.magnification + 0.1, 3.0)
+    }
+
+    @objc func zoomOut() {
+        guard let webView = browserWindow?.webViewForZoom else { return }
+        webView.magnification = max(webView.magnification - 0.1, 0.5)
+    }
+
+    @objc func zoomReset() {
+        browserWindow?.webViewForZoom?.magnification = 1.0
     }
 
     @objc func openPreferences() {

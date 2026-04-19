@@ -85,6 +85,13 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>Hermes Agent uses the microphone for voice input in the chat interface.</string>
     <key>NSUserNotificationUsageDescription</key>
     <string>Hermes Agent notifies you when an AI response is ready while the window is in the background.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+    </dict>
     <key>SUPublicEDKey</key>
     <string>daAlTqdBbYPSCDjS9IfTCJOFDo1jqtjMRZluhtAbKMY=</string>
     <key>SUFeedURL</key>
