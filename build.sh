@@ -101,9 +101,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 PLIST
 
 echo "→ Signing (ad-hoc)..."
-# Sign the framework first, then the app
+# Sign the framework first, then the app bundle.
+# --entitlements embeds the plist so local builds match CI-signed DMGs.
+# Note: ad-hoc signing (sign -) does not verify entitlements; use CI for notarized builds.
 codesign --force --deep --sign - "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
-codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --force --deep --sign - --entitlements Entitlements.plist "$APP_BUNDLE"
 
 echo "→ Installing to Applications..."
 rm -rf "/Applications/$APP_BUNDLE"
