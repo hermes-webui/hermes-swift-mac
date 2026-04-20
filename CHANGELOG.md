@@ -1,5 +1,23 @@
 # Changelog
 
+## [v1.3.3] — 2026-04-20
+
+### Fixed
+- **Microphone "access denied" error after v1.3.2 upgrade** — v1.3.2 correctly removed the
+  aggressive launch-time mic prompt, but also inadvertently removed the recovery path for users
+  whose TCC permission was already `.denied`. Those users got silent failure with no way back.
+  Fixed: the `.denied` branch now calls `decisionHandler(.deny)` immediately (so WebKit doesn't
+  wait) and then shows a single "Open System Settings" alert pointing to Privacy & Security →
+  Microphone. Throttled to once per app session so it can't spam. (user-reported regression from v1.3.2)
+- **Window size still resetting to default after v1.3.2** — the v1.3.2 fix called
+  `setFrameAutosaveName` and `setFrameUsingName` on the raw `NSWindow` before `super.init`.
+  `NSWindowController` has its own `windowFrameAutosaveName` property that both saves and
+  restores the frame — when the controller initialises, its default empty value overwrote the
+  window-level setting, so subsequent resizes were never persisted. Fixed: removed the window-level
+  calls and set `self.windowFrameAutosaveName = "HermesMainWindow"` on the controller after
+  `super.init`. AppKit now manages save and restore atomically. `center()` is guarded to
+  first-launch only. (user-reported regression from v1.3.2)
+
 ## [v1.3.2] — 2026-04-20
 
 ### Fixed
