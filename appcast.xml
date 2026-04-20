@@ -7,6 +7,21 @@
         <language>en</language>
 
         <item>
+            <title>Version 1.3.4</title>
+            <pubDate>Mon, 20 Apr 2026 22:14:06 +0000</pubDate>
+            <sparkle:version>1.3.4</sparkle:version>
+            <sparkle:shortVersionString>1.3.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/hermes-webui/hermes-swift-mac/releases/tag/v1.3.4</sparkle:releaseNotesLink>
+            <enclosure
+                url="https://github.com/hermes-webui/hermes-swift-mac/releases/download/v1.3.4/Hermes-Agent-v1.3.4.dmg"
+                sparkle:edSignature="GVAKnyI/GqX66BdBo4b8zpgnBV8eZk3fgX+deIJB1+yCf4a5AoK5xvnNEresCco02iZozN6m8yfNb8F/gM5nDA=="
+                length="3891728"
+                type="application/octet-stream"/>
+        </item>
+
+
+        <item>
             <title>Version 1.3.3</title>
             <pubDate>Mon, 20 Apr 2026 21:40:14 +0000</pubDate>
             <sparkle:version>1.3.3</sparkle:version>
