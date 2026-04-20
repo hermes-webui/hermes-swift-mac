@@ -77,7 +77,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defaults.set(defaultRemotePort, forKey: "remotePort")
             defaults.set(defaultTargetURL, forKey: "targetURL")
             defaults.set("direct", forKey: "connectionMode")
-            defaults.set(true, forKey: "notificationsEnabled")
         }
     }
 
@@ -344,7 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             1, &eventSpec, selfPtr, &carbonEventHandler
         )
         let hkID = EventHotKeyID(signature: OSType(0x4845_524D), id: 1)  // 'HERM'
-        RegisterEventHotKey(
+        let status = RegisterEventHotKey(
             UInt32(kVK_ANSI_H),
             UInt32(cmdKey | shiftKey),
             hkID,
@@ -352,6 +351,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             0,
             &carbonHotKeyRef
         )
+        if status != noErr {
+            NSLog("[HermesAgent] RegisterEventHotKey failed (OSStatus %d) — Cmd+Shift+H may already be claimed by another app.", status)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

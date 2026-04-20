@@ -1,5 +1,12 @@
 # Changelog
 
+## [v1.2.1] — 2026-04-20
+
+### Fixed
+- **RegisterEventHotKey OSStatus now checked** — if Cmd+Shift+H is already claimed by another app (Alfred, Raycast, etc.), a diagnostic `NSLog` fires instead of silently no-opping. Surfaced by the v1.2.0 independent review.
+- **Redundant `notificationsEnabled` seed removed** — `seedDefaultsIfNeeded()` was setting `notificationsEnabled` alongside `UserDefaults.standard.register(defaults:)`, which already covers both fresh installs and upgrades. The seed in `register(defaults:)` is the authoritative one; the duplicate in `seedDefaultsIfNeeded` is removed.
+- **Notifications checkbox init cleaned up** — `target` and `action` are now set in the `NSButton` initializer directly, removing the redundant two-line post-init reassignment.
+
 ## [v1.2.0] — 2026-04-20
 
 ### Fixed
