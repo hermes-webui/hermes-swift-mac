@@ -14,10 +14,11 @@ class PreferencesWindowController: NSWindowController {
     private var targetURLField: NSTextField!
     private var testResultLabel: NSTextField!
     private var launchAtLoginCheckbox: NSButton!
+    private var notificationsCheckbox: NSButton!
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 556),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -129,6 +130,19 @@ class PreferencesWindowController: NSWindowController {
         targetURLField = row(
             "Target URL", placeholder: "http://localhost:8787", defaultsKey: "targetURL")
 
+        // Notifications toggle (fix #28)
+        notificationsCheckbox = NSButton(
+            checkboxWithTitle: "Show a notification when a response completes while the app is in the background",
+            target: nil,
+            action: nil)
+        notificationsCheckbox.frame = NSRect(x: 164, y: y, width: 290, height: 22)
+        notificationsCheckbox.state =
+            UserDefaults.standard.bool(forKey: "notificationsEnabled") ? .on : .off
+        notificationsCheckbox.target = self
+        notificationsCheckbox.action = #selector(toggleNotifications(_:))
+        content.addSubview(notificationsCheckbox)
+        y -= 36
+
         // Launch at Login (fix #3) — uses SMAppService (macOS 13+)
         launchAtLoginCheckbox = NSButton(
             checkboxWithTitle: "Launch at login",
@@ -172,6 +186,12 @@ class PreferencesWindowController: NSWindowController {
         testResultLabel.textColor = .secondaryLabelColor
         testResultLabel.frame = NSRect(x: 164, y: 22, width: 90, height: 16)
         content.addSubview(testResultLabel)
+    }
+
+    // MARK: - Notifications toggle (fix #28)
+
+    @objc func toggleNotifications(_ sender: NSButton) {
+        UserDefaults.standard.set(sender.state == .on, forKey: "notificationsEnabled")
     }
 
     // MARK: - Launch at login (fix #3)

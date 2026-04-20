@@ -1,4 +1,5 @@
 import AVFoundation
+import Carbon.HIToolbox
 import Cocoa
 import Sparkle
 
@@ -19,6 +20,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var preferencesWindow: PreferencesWindowController?
     var updaterController: SPUStandardUpdaterController!
 
+    // Global hotkey state (fix #6, Carbon-based — no Accessibility permission required)
+    private var carbonHotKeyRef: EventHotKeyRef?
+    private var carbonEventHandler: EventHandlerRef?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -33,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenu()
         seedDefaultsIfNeeded()
         requestMicrophonePermission()
+        setupGlobalHotkey()
         startTunnel()
     }
 
@@ -66,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defaults.set(defaultRemotePort, forKey: "remotePort")
             defaults.set(defaultTargetURL, forKey: "targetURL")
             defaults.set("direct", forKey: "connectionMode")
+            defaults.set(true, forKey: "notificationsEnabled")
         }
     }
 
@@ -253,6 +260,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         viewMenuItem.submenu = viewMenu
         viewMenu.addItem(
+            withTitle: "Reload", action: #selector(reloadPage), keyEquivalent: "r")
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(
             withTitle: "Zoom In", action: #selector(zoomIn), keyEquivalent: "+")
         viewMenu.addItem(
             withTitle: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-")
@@ -264,6 +274,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+    }
+
+    // MARK: - Page reload (fix — Cmd+R)
+
+    @objc func reloadPage() {
+        browserWindow?.webViewForZoom?.reload()
     }
 
     // MARK: - View zoom (fix #24)
@@ -294,11 +310,65 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         preferencesWindow?.window?.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: - Global hotkey Cmd+Shift+H (fix #6)
+    // Uses Carbon RegisterEventHotKey — works without Accessibility permission,
+    // fires from any app immediately on first launch.
+
+    private func setupGlobalHotkey() {
+        var eventSpec = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        // Retain self for the C callback. Released in applicationWillTerminate.
+        let selfPtr = Unmanaged.passRetained(self).toOpaque()
+        InstallApplicationEventHandler(
+            { _, _, userData -> OSStatus in
+                guard let ptr = userData else { return noErr }
+                let delegate = Unmanaged<AppDelegate>.fromOpaque(ptr).takeUnretainedValue()
+                DispatchQueue.main.async {
+                    delegate.browserWindow?.showWindow(nil)
+                    delegate.browserWindow?.window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return noErr
+            },
+            1, &eventSpec, selfPtr, &carbonEventHandler
+        )
+        var hkID = EventHotKeyID(signature: OSType(0x4845_524D), id: 1)  // 'HERM'
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_H),
+            UInt32(cmdKey | shiftKey),
+            hkID,
+            GetApplicationEventTarget(),
+            0,
+            &carbonHotKeyRef
+        )
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         tunnelManager?.stop()
+        // Clean up Carbon hotkey registration and release the retained self pointer.
+        if let ref = carbonHotKeyRef {
+            UnregisterEventHotKey(ref)
+            carbonHotKeyRef = nil
+        }
+        if let handler = carbonEventHandler {
+            RemoveEventHandler(handler)
+            carbonEventHandler = nil
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
+        // Window hidden via Cmd+W should not quit the app — keep running in Dock.
+        return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Clicking the Dock icon when the window is hidden brings it back.
+        if !flag {
+            browserWindow?.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         return true
     }
 }
