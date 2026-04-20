@@ -135,13 +135,11 @@ class PreferencesWindowController: NSWindowController {
         // Notifications toggle (fix #28)
         notificationsCheckbox = NSButton(
             checkboxWithTitle: "Show a notification when a response completes while the app is in the background",
-            target: nil,
-            action: nil)
+            target: self,
+            action: #selector(toggleNotifications(_:)))
         notificationsCheckbox.frame = NSRect(x: 164, y: y, width: 290, height: 22)
         notificationsCheckbox.state =
             UserDefaults.standard.bool(forKey: "notificationsEnabled") ? .on : .off
-        notificationsCheckbox.target = self
-        notificationsCheckbox.action = #selector(toggleNotifications(_:))
         content.addSubview(notificationsCheckbox)
         y -= 36
 
