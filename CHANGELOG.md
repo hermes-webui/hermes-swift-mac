@@ -1,5 +1,24 @@
 # Changelog
 
+## [v1.3.0] — 2026-04-20
+
+### Added
+- **Auto-reconnect on network restore (NWPathMonitor)** — when WiFi drops and comes back,
+  or a VPN connects, the app automatically re-attempts connection without any manual click.
+  Only fires when the app is already in an error or disconnected state; no action is taken
+  if the backend is simply down with a healthy network. Uses `Network.framework`
+  `NWPathMonitor`, no Accessibility permission required. (closes #38)
+- **Zoom level persistence** — zoom level (Cmd++/Cmd+-/Cmd+0) is now saved to UserDefaults
+  and restored after every page load, including reconnects. (part of closes #43)
+- **Full-screen state persistence** — if the app was in full-screen when quit, it returns to
+  full-screen on next launch. Uses `NSWindowDelegate` `windowDidEnterFullScreen`/
+  `windowDidExitFullScreen` callbacks. (part of closes #43)
+- **Dock icon badge when offline** — the Dock icon shows a "!" badge when the backend is
+  unreachable (direct mode health check failure or SSH tunnel disconnects). Clears
+  automatically when the connection is restored. Visible even when the window is hidden. (closes #39)
+- **View → Open in Browser** — opens the configured Hermes URL in the system default browser.
+  Useful for comparison or debugging without changing any settings.
+
 ## [v1.2.2] — 2026-04-20
 
 ### Fixed

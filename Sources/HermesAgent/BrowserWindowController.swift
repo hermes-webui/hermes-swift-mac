@@ -39,6 +39,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private let connectionMode: String
     var onReconnect: (() -> Void)?
     var onNavigationFailed: (() -> Void)?
+    /// Set to true before programmatic close so windowDidExitFullScreen
+    /// doesn't clobber the saved full-screen preference (fix #43).
+    var isIntentionalClose = false
 
     // Health check timer for direct mode — polls /health every 30s and
     // reflects status in the window title (fix #29).
@@ -363,6 +366,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
         let dot = healthy ? "●" : "○"
         window?.title = "\(appTitle)  \(dot) \(hostDisplay)"
+        // Update Dock badge to reflect connection health (fix #39)
+        (NSApp.delegate as? AppDelegate)?.setOfflineBadge(!healthy)
     }
 
     func updateStatus(_ status: TunnelStatus, host: String, port: Int) {
@@ -378,10 +383,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                 self.statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
                 self.statusLabel.stringValue = "Tunnel connected · \(host) · port \(port)"
                 self.reconnectButton.isHidden = true
+                (NSApp.delegate as? AppDelegate)?.setOfflineBadge(false)
             case .disconnected:
                 self.statusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
                 self.statusLabel.stringValue = "Tunnel disconnected · click Reconnect to retry"
                 self.reconnectButton.isHidden = false
+                (NSApp.delegate as? AppDelegate)?.setOfflineBadge(true)
             }
         }
     }
@@ -429,6 +436,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                 self?.notificationAuthGranted = granted
                 if granted { postNotification() }
             }
+        }
+    }
+
+    // MARK: - Zoom level restore (fix #43)
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
+        // treat any value outside the valid zoom range as "no preference".
+        let saved = UserDefaults.standard.double(forKey: "webViewMagnification")
+        if saved >= 0.5 && saved <= 3.0 {
+            webView.magnification = saved
         }
     }
 
@@ -549,6 +567,18 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Ensure the WebView holds keyboard focus whenever the window is active,
         // so shortcuts like Cmd+K reach JavaScript without requiring an extra click.
         webView.becomeFirstResponder()
+    }
+
+    // MARK: - Full-screen state persistence (fix #43)
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        UserDefaults.standard.set(true, forKey: "windowWasFullScreen")
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        // Don't clobber the saved preference during a programmatic reconnect close.
+        guard !isIntentionalClose else { return }
+        UserDefaults.standard.set(false, forKey: "windowWasFullScreen")
     }
 
     func windowWillClose(_ notification: Notification) {
