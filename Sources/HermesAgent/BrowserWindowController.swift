@@ -618,23 +618,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
         let mediaType: AVMediaType = (type == .camera) ? .video : .audio
-        switch AVCaptureDevice.authorizationStatus(for: mediaType) {
-        case .authorized:
-            decisionHandler(.grant)
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: mediaType) { granted in
-                DispatchQueue.main.async { decisionHandler(granted ? .grant : .deny) }
-            }
-        case .denied, .restricted:
-            // Deny immediately so WebKit doesn't wait on us, then surface a recovery path
-            // so the user knows how to re-grant access. Throttled to once per session.
-            decisionHandler(.deny)
-            guard !Self.didShowMicDeniedAlert, type != .camera else { break }
-            Self.didShowMicDeniedAlert = true
+        // Always route through requestAccess — never short-circuit on .authorized.
+        // requestAccess sends an XPC message to tccd on every call, which is required
+        // for WebContent's capture attribution to succeed. Short-circuiting to
+        // decisionHandler(.grant) when .authorized bypasses this tccd round-trip,
+        // causing getUserMedia() to fail with NotAllowedError even when TCC is .authorized.
+        // When already .authorized, requestAccess completes immediately (no UI, no prompt).
+        AVCaptureDevice.requestAccess(for: mediaType) { granted in
             DispatchQueue.main.async {
+                decisionHandler(granted ? .grant : .deny)
+                // Show a recovery alert for mic denial — once per session, not for camera.
+                guard !granted, type != .camera,
+                      !Self.didShowMicDeniedAlert else { return }
+                Self.didShowMicDeniedAlert = true
                 let alert = NSAlert()
                 alert.messageText = "Microphone Access Required"
-                alert.informativeText = "Hermes Agent needs microphone access for voice input. Enable it in System Settings → Privacy & Security → Microphone, then reload the page."
+                alert.informativeText = "Enable microphone access for Hermes Agent in System Settings \u{2192} Privacy & Security \u{2192} Microphone, then reload the page."
                 alert.addButton(withTitle: "Open System Settings")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn,
@@ -642,8 +641,6 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                     NSWorkspace.shared.open(url)
                 }
             }
-        @unknown default:
-            decisionHandler(.deny)
         }
     }
 }

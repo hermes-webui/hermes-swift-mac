@@ -5,8 +5,10 @@
     <!-- Network access for SSH tunnel, WebUI, and Sparkle update checks -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <!-- Microphone for voice input in the chat interface -->
-    <key>com.apple.security.device.microphone</key>
+    <!-- Microphone for voice input in the chat interface.
+         The correct hardened-runtime entitlement key is audio-input, not microphone.
+         com.apple.security.device.microphone is not a valid entitlement and is silently ignored. -->
+    <key>com.apple.security.device.audio-input</key>
     <true/>
     <!-- No sandbox — required for SSH tunnel subprocess (NSTask).
          com.apple.security.app-sandbox is omitted (implicitly false for non-MAS apps). -->

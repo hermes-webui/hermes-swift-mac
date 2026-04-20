@@ -2,15 +2,30 @@
 
 ## [v1.3.5] — 2026-04-20
 
+### Fixed
+- **Microphone actually works — root cause finally found** — the `Entitlements.plist` had
+  `com.apple.security.device.microphone` which is not a valid hardened-runtime entitlement
+  key and is silently ignored by the codesigner. The correct key is
+  `com.apple.security.device.audio-input`. Every DMG since the beginning of the project was
+  signed without the actual mic entitlement, making `getUserMedia()` fail at the OS level
+  regardless of TCC status. Fixed in `Entitlements.plist`. CI applies the plist via
+  `--entitlements Entitlements.plist` so the fix propagates automatically.
+- **WKUIDelegate mic delegate no longer short-circuits on `.authorized`** — the previous
+  implementation checked `AVCaptureDevice.authorizationStatus` and called
+  `decisionHandler(.grant)` directly when `.authorized`, bypassing `requestAccess`. That
+  bypass skips the XPC message to `tccd` that WebContent needs for its capture attribution
+  to succeed. The delegate now always routes through `AVCaptureDevice.requestAccess` — when
+  already `.authorized` it completes immediately with no UI, when `.notDetermined` it shows
+  the OS prompt, when `.denied` it shows the recovery alert. (user-reported)
+- **`warmUpCaptureSubsystem` now uses `requestAccess` instead of `AVCaptureDevice.default`** —
+  `default(for: .audio)` only queries IOKit and does not contact `tccd`. `requestAccess`
+  sends the XPC message that primes the attribution chain for WebContent.
+
 ### Added
-- **Regression documentation tests** — added `LaunchBehaviorTests.swift` with two documented
-  invariants that cannot be unit-tested mechanically but must hold at launch:
-  (1) `warmUpCaptureSubsystem()` must be called in `applicationDidFinishLaunching` (removing it
-  silently breaks mic for all users — happened in v1.3.2); (2) window frame autosave name must
-  be set on the NSWindowController, not the raw NSWindow (happened in v1.3.2, fixed in v1.3.3).
-  Tests pass trivially but carry full explanation of the regression history and the exact
-  mechanism, so future refactors cannot delete these invariants without reading why they exist.
-  (reviewer follow-up from #49)
+- **Regression documentation tests** — `LaunchBehaviorTests.swift` with documented invariants
+  for `warmUpCaptureSubsystem` and the window frame autosave pattern. Tests pass trivially
+  but carry the full regression history so future refactors cannot delete these invariants
+  silently. Test count: 20 → 22. (reviewer follow-up from #49)
 
 ## [v1.3.4] — 2026-04-20
 
