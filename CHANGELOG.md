@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.3.4] — 2026-04-20
+
+### Fixed
+- **Shared window autosave name constant** — `"HermesMainWindow"` appeared twice in
+  `BrowserWindowController`: once as the `windowFrameAutosaveName` value and once embedded
+  in the derived UserDefaults key `"NSWindow Frame HermesMainWindow"`. Extracted to
+  `private static let windowAutosaveName`. The derived key is now interpolated from the
+  constant, eliminating the drift risk. (reviewer follow-up from #48, same pattern as
+  `AppDelegate.zoomKey` fix in v1.3.1)
+
 ## [v1.3.3] — 2026-04-20
 
 ### Fixed
