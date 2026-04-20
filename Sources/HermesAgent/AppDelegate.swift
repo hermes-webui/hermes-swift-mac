@@ -263,6 +263,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleAutoReconnect() {
+        // NOTE: This fires on network-link restoration (WiFi up, VPN connected, etc.),
+        // not on backend-health events. If the server is down but the network is healthy,
+        // no extra reconnect attempts fire — the path stays .satisfied so this is never called.
         pendingReconnect?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
@@ -373,7 +376,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - View zoom (fix #24, #43 — zoom level persisted)
 
-    private static let zoomKey = "webViewMagnification"
+    static let zoomKey = "webViewMagnification"
 
     @objc func zoomIn() {
         guard let webView = browserWindow?.webViewForZoom else { return }

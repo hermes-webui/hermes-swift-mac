@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.3.1] — 2026-04-20
+
+### Fixed
+- **Shared zoom key constant** — `"webViewMagnification"` was defined as a private static
+  in `AppDelegate` and duplicated as a bare string literal in `BrowserWindowController`.
+  Made `AppDelegate.zoomKey` internal so `BrowserWindowController` references the single source
+  of truth. (reviewer follow-up from #44)
+- **NWPathMonitor reconnect scope documented** — added inline comment to `scheduleAutoReconnect`
+  clarifying that it fires on network-link events only, not backend-health events.
+- **`(NSApp.delegate as? AppDelegate)` cast comment** — acknowledged the intentional coupling
+  and why a full protocol abstraction isn't warranted here.
+
 ## [v1.3.0] — 2026-04-20
 
 ### Added

@@ -366,7 +366,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
         let dot = healthy ? "●" : "○"
         window?.title = "\(appTitle)  \(dot) \(hostDisplay)"
-        // Update Dock badge to reflect connection health (fix #39)
+        // Update Dock badge. The cast is safe — AppDelegate is always the app delegate
+        // in this single-delegate architecture. A ConnectionStatusObserver protocol
+        // would decouple this but adds boilerplate not warranted for a utility method.
         (NSApp.delegate as? AppDelegate)?.setOfflineBadge(!healthy)
     }
 
@@ -444,7 +446,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
         // treat any value outside the valid zoom range as "no preference".
-        let saved = UserDefaults.standard.double(forKey: "webViewMagnification")
+        let saved = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
         if saved >= 0.5 && saved <= 3.0 {
             webView.magnification = saved
         }
