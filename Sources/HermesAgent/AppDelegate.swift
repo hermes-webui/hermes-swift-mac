@@ -1,6 +1,7 @@
 import AVFoundation
 import Carbon.HIToolbox
 import Cocoa
+import Network
 import Sparkle
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -24,6 +25,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var carbonHotKeyRef: EventHotKeyRef?
     private var carbonEventHandler: EventHandlerRef?
 
+    // NWPathMonitor auto-reconnect (fix #38)
+    private let pathMonitor = NWPathMonitor()
+    private let pathMonitorQueue = DispatchQueue(label: "hermes.network.monitor")
+    private var lastPathStatus: NWPath.Status = .satisfied
+    private var pendingReconnect: DispatchWorkItem?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -45,6 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         requestMicrophonePermission()
         setupGlobalHotkey()
         startTunnel()
+        startPathMonitor()
     }
 
     private func requestMicrophonePermission() {
@@ -88,6 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splashSubtitle = connectionMode == "ssh" ? "Establishing SSH tunnel…" : "Connecting…"
         splashWindow = SplashWindowController(title: appTitle, subtitle: splashSubtitle)
         splashWindow.showWindow(nil)
+        browserWindow?.isIntentionalClose = true
         browserWindow?.close()
         browserWindow = nil
         errorWindow?.close()
@@ -172,9 +181,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         browser.showWindow(nil)
         browserWindow = browser
+
+        // Restore full-screen state (fix #43)
+        if UserDefaults.standard.bool(forKey: "windowWasFullScreen") {
+            DispatchQueue.main.async {
+                if browser.window?.styleMask.contains(.fullScreen) == false {
+                    browser.window?.toggleFullScreen(nil)
+                }
+            }
+        }
+
+        // Clear offline badge when connected (fix #39)
+        setOfflineBadge(false)
     }
 
     private func showErrorWindow(targetURL: String, mode: String) {
+        browserWindow?.isIntentionalClose = true
         browserWindow?.close()
         browserWindow = nil
         let err = ErrorWindowController(
@@ -193,6 +215,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         err.showWindow(nil)
         err.window?.makeKeyAndOrderFront(nil)
         errorWindow = err
+
+        // Show offline badge when in error state (fix #39)
+        setOfflineBadge(true)
     }
 
     /// Verify the target URL answers HTTP before opening the main browser.
@@ -211,6 +236,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         URLSession.shared.dataTask(with: request) { _, response, _ in
             completion(response is HTTPURLResponse)
         }.resume()
+    }
+
+    // MARK: - Dock badge (fix #39)
+
+    func setOfflineBadge(_ offline: Bool) {
+        DispatchQueue.main.async {
+            NSApp.dockTile.badgeLabel = offline ? "!" : nil
+        }
+    }
+
+    // MARK: - NWPathMonitor auto-reconnect (fix #38)
+
+    private func startPathMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                let previous = self.lastPathStatus
+                self.lastPathStatus = path.status
+                // Only react to unsatisfied → satisfied transitions.
+                guard previous != .satisfied, path.status == .satisfied else { return }
+                self.scheduleAutoReconnect()
+            }
+        }
+        pathMonitor.start(queue: pathMonitorQueue)
+    }
+
+    private func scheduleAutoReconnect() {
+        pendingReconnect?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            let inErrorState = self.errorWindow != nil
+                || self.tunnelManager?.status == .disconnected
+            guard inErrorState else { return }
+            NSLog("[HermesAgent] Network came back — auto-reconnecting")
+            self.startTunnel()
+        }
+        pendingReconnect = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
     func setupMenu() {
@@ -249,7 +312,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-
         let windowMenuItem = NSMenuItem()
         menuBar.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
@@ -275,6 +337,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-")
         viewMenu.addItem(
             withTitle: "Actual Size", action: #selector(zoomReset), keyEquivalent: "0")
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(
+            withTitle: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "")
 
         NSApp.mainMenu = menuBar
     }
@@ -297,20 +362,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         browserWindow?.webViewForZoom?.reload()
     }
 
-    // MARK: - View zoom (fix #24)
+    // MARK: - Open in system browser (bonus feature)
+
+    @objc func openInBrowser() {
+        let urlString = UserDefaults.standard.string(forKey: "targetURL") ?? "http://localhost:8787"
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - View zoom (fix #24, #43 — zoom level persisted)
+
+    private static let zoomKey = "webViewMagnification"
 
     @objc func zoomIn() {
         guard let webView = browserWindow?.webViewForZoom else { return }
         webView.magnification = min(webView.magnification + 0.1, 3.0)
+        UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
     }
 
     @objc func zoomOut() {
         guard let webView = browserWindow?.webViewForZoom else { return }
         webView.magnification = max(webView.magnification - 0.1, 0.5)
+        UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
     }
 
     @objc func zoomReset() {
         browserWindow?.webViewForZoom?.magnification = 1.0
+        UserDefaults.standard.set(1.0, forKey: Self.zoomKey)
     }
 
     @objc func openPreferences() {
@@ -368,6 +447,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        pathMonitor.cancel()
+        pendingReconnect?.cancel()
         tunnelManager?.stop()
         // Clean up Carbon hotkey registration and release the retained self pointer.
         if let ref = carbonHotKeyRef {
