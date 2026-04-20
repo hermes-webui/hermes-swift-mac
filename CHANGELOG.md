@@ -1,5 +1,18 @@
 # Changelog
 
+## [v1.3.6] — 2026-04-20
+
+### Fixed
+- **`build.sh` now embeds entitlements in local ad-hoc builds** — `codesign` in `build.sh`
+  was signing without `--entitlements Entitlements.plist`, so locally-built `.app` bundles
+  never had any embedded entitlements (including `com.apple.security.device.audio-input`).
+  CI was correct (it already passed `--entitlements`). Local builds now embed the same
+  entitlements as CI-signed DMGs, making mic and other entitlement-gated features testable
+  without a full CI run. (reviewer follow-up from #50)
+- **Stale comment in `LaunchBehaviorTests`** — the warm-up regression history comment still
+  referenced `default(for:)` and omitted the v1.3.5 entitlement root cause. Updated to
+  accurately describe the fix history through v1.3.5. (reviewer follow-up from #50)
+
 ## [v1.3.5] — 2026-04-20
 
 ### Fixed

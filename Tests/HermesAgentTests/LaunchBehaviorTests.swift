@@ -20,7 +20,10 @@ final class LaunchBehaviorTests: XCTestCase {
     /// even when TCC status is .authorized and the WKUIDelegate returns .grant.
     ///
     /// **History:** Deleted in v1.3.2 (it was part of the proactive prompt, which was rightly removed).
-    /// Mic broke for all users (v1.3.2, v1.3.3). Restored as a silent warm-up in v1.3.4 (PR #49).
+    /// Mic broke for all users (v1.3.2–v1.3.4). Root cause found in v1.3.5: Entitlements.plist used
+    /// `com.apple.security.device.microphone` (invalid) instead of `com.apple.security.device.audio-input`.
+    /// warm-up now uses `AVCaptureDevice.requestAccess` (contacts tccd) not `default(for:)` (IOKit only).
+    /// Fixed in v1.3.5 (PR #50).
     ///
     /// **If you're tempted to remove it:** don't. If you think it's redundant, check the above.
     /// The TCC status being .authorized is necessary but not sufficient — the host AVFoundation
