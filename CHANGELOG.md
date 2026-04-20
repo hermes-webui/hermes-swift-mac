@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.3.5] — 2026-04-20
+
+### Added
+- **Regression documentation tests** — added `LaunchBehaviorTests.swift` with two documented
+  invariants that cannot be unit-tested mechanically but must hold at launch:
+  (1) `warmUpCaptureSubsystem()` must be called in `applicationDidFinishLaunching` (removing it
+  silently breaks mic for all users — happened in v1.3.2); (2) window frame autosave name must
+  be set on the NSWindowController, not the raw NSWindow (happened in v1.3.2, fixed in v1.3.3).
+  Tests pass trivially but carry full explanation of the regression history and the exact
+  mechanism, so future refactors cannot delete these invariants without reading why they exist.
+  (reviewer follow-up from #49)
+
 ## [v1.3.4] — 2026-04-20
 
 ### Fixed
