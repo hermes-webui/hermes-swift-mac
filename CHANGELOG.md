@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.3.2] — 2026-04-20
+
+### Fixed
+- **Microphone permission prompt no longer appears on every launch** — removed the proactive
+  `requestMicrophonePermission()` call from `applicationDidFinishLaunching`. That call fired
+  on every launch and, once the user had denied mic access, showed an `NSAlert` on *every*
+  subsequent launch regardless of whether the mic was needed. The `WKUIDelegate` method
+  `requestMediaCapturePermissionFor` already handles mic grants correctly and lazily — the
+  OS prompt only appears the first time the user actually clicks the mic button in the web UI.
+  (user-reported)
+- **Window size now persists across launches** — for programmatically created `NSWindow`
+  instances, `setFrameAutosaveName` saves future frame changes but does not restore the
+  previously saved frame on re-creation. Added `setFrameUsingName("HermesMainWindow")`
+  immediately after the autosave call; `center()` now only runs on first launch (when no
+  saved frame exists). Last used size and position are preserved across restarts. (user-reported)
+- **Navigation failure double-fire guard** — both `didFailProvisionalNavigation` and the
+  5xx `decidePolicyFor navigationResponse` handler can fire on the same failing load event
+  during teardown. Added `didReportNavigationFailure` flag so the error window is only
+  opened once per navigation attempt.
+
 ## [v1.3.1] — 2026-04-20
 
 ### Fixed

@@ -39,6 +39,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private let connectionMode: String
     var onReconnect: (() -> Void)?
     var onNavigationFailed: (() -> Void)?
+    /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
+    /// can trigger on the same load event during teardown).
+    private var didReportNavigationFailure = false
     /// Set to true before programmatic close so windowDidExitFullScreen
     /// doesn't clobber the saved full-screen preference (fix #43).
     var isIntentionalClose = false
@@ -60,9 +63,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             defer: false
         )
         window.title = title
-        window.center()
-        // Remember last size + position across launches.
+        // Restore last window size + position (fix: window size resetting on launch).
+        // setFrameAutosaveName saves future changes but does NOT restore the saved frame —
+        // setFrameUsingName does the restore. For IB-created windows AppKit wires both;
+        // for code-created windows we must call both manually.
+        // setFrameUsingName returns false on first launch (no saved frame) — fall back to center().
         window.setFrameAutosaveName("HermesMainWindow")
+        if !window.setFrameUsingName("HermesMainWindow") {
+            window.center()
+        }
         // Fix #23: set native window background to dark before content loads,
         // so there's no white frame visible while WKWebView is initializing.
         window.backgroundColor = .windowBackgroundColor
@@ -467,6 +476,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
             return
         }
+        guard !didReportNavigationFailure else { return }
+        didReportNavigationFailure = true
         onNavigationFailed?()
     }
 
@@ -482,6 +493,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             httpResponse.statusCode >= 500
         {
             decisionHandler(.cancel)
+            guard !didReportNavigationFailure else { return }
+            didReportNavigationFailure = true
             onNavigationFailed?()
         } else {
             decisionHandler(.allow)
