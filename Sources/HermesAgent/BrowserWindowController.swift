@@ -631,7 +631,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             DispatchQueue.main.async {
                 let alert = NSAlert()
                 alert.messageText = "Microphone Access Required"
-                alert.informativeText = "Hermes Agent needs microphone access for voice input. Enable it in System Settings \u2192 Privacy & Security \u2192 Microphone, then reload the page."
+                alert.informativeText = "Hermes Agent needs microphone access for voice input. Enable it in System Settings → Privacy & Security → Microphone, then reload the page."
                 alert.addButton(withTitle: "Open System Settings")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn,
