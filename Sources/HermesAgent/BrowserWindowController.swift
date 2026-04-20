@@ -42,6 +42,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
     /// can trigger on the same load event during teardown).
     private var didReportNavigationFailure = false
+    /// Throttle the mic-denied alert to once per app session — avoids spamming if the
+    /// user hits the mic button multiple times after having denied access.
+    private static var didShowMicDeniedAlert = false
     /// Set to true before programmatic close so windowDidExitFullScreen
     /// doesn't clobber the saved full-screen preference (fix #43).
     var isIntentionalClose = false
@@ -63,19 +66,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             defer: false
         )
         window.title = title
-        // Restore last window size + position (fix: window size resetting on launch).
-        // setFrameAutosaveName saves future changes but does NOT restore the saved frame —
-        // setFrameUsingName does the restore. For IB-created windows AppKit wires both;
-        // for code-created windows we must call both manually.
-        // setFrameUsingName returns false on first launch (no saved frame) — fall back to center().
-        window.setFrameAutosaveName("HermesMainWindow")
-        if !window.setFrameUsingName("HermesMainWindow") {
-            window.center()
-        }
         // Fix #23: set native window background to dark before content loads,
         // so there's no white frame visible while WKWebView is initializing.
         window.backgroundColor = .windowBackgroundColor
         super.init(window: window)
+
+        // Persist and restore window frame across launches.
+        // Must be set on the NSWindowController (self), not on the raw NSWindow.
+        // Setting it on the window before super.init is clobbered by the controller's
+        // own empty windowFrameAutosaveName during its setup. The controller property
+        // handles both save and restore atomically.
+        self.windowFrameAutosaveName = "HermesMainWindow"
+        // First launch (no saved frame yet): center the window.
+        if UserDefaults.standard.object(forKey: "NSWindow Frame HermesMainWindow") == nil {
+            window.center()
+        }
 
         window.onPaste = { [weak self] in
             self?.handlePaste()
@@ -618,7 +623,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                 DispatchQueue.main.async { decisionHandler(granted ? .grant : .deny) }
             }
         case .denied, .restricted:
+            // Deny immediately so WebKit doesn't wait on us, then surface a recovery path
+            // so the user knows how to re-grant access. Throttled to once per session.
             decisionHandler(.deny)
+            guard !Self.didShowMicDeniedAlert, type != .camera else { break }
+            Self.didShowMicDeniedAlert = true
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Microphone Access Required"
+                alert.informativeText = "Hermes Agent needs microphone access for voice input. Enable it in System Settings \u2192 Privacy & Security \u2192 Microphone, then reload the page."
+                alert.addButton(withTitle: "Open System Settings")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn,
+                   let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
         @unknown default:
             decisionHandler(.deny)
         }
