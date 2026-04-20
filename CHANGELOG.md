@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.2.0] — 2026-04-20
+
+### Fixed
+- **Notification copy** — preferences toggle now reads "Show a notification when a response completes while the **app** is in the background" — replacing the old "tab" wording left over from browser context. The toggle is wired to a new UserDefaults key (`notificationsEnabled`, default on) so users can disable native notifications. (fixes #28)
+
+### Added
+- **Cmd+,** — opens Preferences (standard macOS keyboard shortcut). Already wired; documented here explicitly.
+- **Cmd+R** — reloads the WebUI page via a new View → Reload menu item.
+- **Cmd+W** — hides the window instead of quitting. App stays running in the Dock; clicking the Dock icon brings it back. `applicationShouldTerminateAfterLastWindowClosed` returns `false` and `applicationShouldHandleReopen` re-surfaces the window.
+- **Window position memory** — `setFrameAutosaveName("HermesMainWindow")` restores last size and position on every launch.
+- **Global hotkey Cmd+Shift+H** — brings Hermes forward from any app using Carbon `RegisterEventHotKey`. No Accessibility permission required; works on first launch. (closes #6)
+
 ## [v1.1.0] — 2026-04-19
 
 ### Added

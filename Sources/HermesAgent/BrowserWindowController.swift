@@ -58,6 +58,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         window.title = title
         window.center()
+        // Remember last size + position across launches.
+        window.setFrameAutosaveName("HermesMainWindow")
         // Fix #23: set native window background to dark before content loads,
         // so there's no white frame visible while WKWebView is initializing.
         window.backgroundColor = .windowBackgroundColor
@@ -397,7 +399,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         guard message.name == "hermesNotify",
               let body = message.body as? [String: String],
               let title = body["title"],
-              let text = body["body"]
+              let text = body["body"],
+              UserDefaults.standard.bool(forKey: "notificationsEnabled")
         else { return }
 
         let center = UNUserNotificationCenter.current()
@@ -533,7 +536,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         decisionHandler(.cancel)
     }
 
-    // MARK: - Window focus
+    // MARK: - Window close / hide (Cmd+W hides, doesn't quit)
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Cmd+W on a Dock app should hide the window, not quit.
+        // Keep the app alive so the Dock icon stays and can reopen the window.
+        window?.orderOut(nil)
+        return false
+    }
 
     func windowDidBecomeKey(_ notification: Notification) {
         // Ensure the WebView holds keyboard focus whenever the window is active,
