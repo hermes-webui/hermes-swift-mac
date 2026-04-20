@@ -132,6 +132,21 @@ Settings persist across launches.
 
 ---
 
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| ⌘, | Open Preferences |
+| ⌘R | Reload the WebUI page |
+| ⌘W | Hide window (app keeps running in Dock) |
+| ⌘⇧H | Bring Hermes forward from any app (global) |
+| ⌘+ / ⌘− | Zoom in / zoom out |
+| ⌘0 | Reset zoom to actual size |
+
+The global shortcut ⌘⇧H works system-wide — press it from any app to snap Hermes back to the front.
+
+---
+
 ## SSH security
 
 - `StrictHostKeyChecking=accept-new` — on the first connection to a new host, the key is added to `~/.ssh/known_hosts` automatically. On all later connections, a changed host key is rejected, protecting against MITM attacks after the first connect.

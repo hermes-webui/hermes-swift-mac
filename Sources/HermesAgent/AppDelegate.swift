@@ -255,6 +255,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
         windowMenu.addItem(
+            withTitle: "Show Hermes", action: #selector(showMainWindow), keyEquivalent: "H")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(
             withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
@@ -278,6 +281,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+    }
+
+    // MARK: - Show window (mirrors global hotkey Cmd+Shift+H, fix #35)
+
+    @objc func showMainWindow() {
+        browserWindow?.showWindow(nil)
+        browserWindow?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Page reload (fix — Cmd+R)

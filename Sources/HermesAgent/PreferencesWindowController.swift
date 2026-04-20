@@ -18,7 +18,7 @@ class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 556),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 592),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -35,20 +35,20 @@ class PreferencesWindowController: NSWindowController {
         let content = window!.contentView!
         // Starting y must shift with the window height bump; otherwise the new
         // Notifications row pushes launchAtLogin into the Save/Cancel buttons.
-        var y: CGFloat = 496
+        var y: CGFloat = 532
 
         func sectionHeader(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
             label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
             label.textColor = .secondaryLabelColor
-            label.frame = NSRect(x: 24, y: y, width: 420, height: 16)
+            label.frame = NSRect(x: 24, y: y, width: 460, height: 16)
             content.addSubview(label)
             y -= 28
             return label
         }
 
         func row(
-            _ labelText: String, placeholder: String, defaultsKey: String, width: CGFloat = 260,
+            _ labelText: String, placeholder: String, defaultsKey: String, width: CGFloat = 300,
             isSSH: Bool = false
         ) -> NSTextField {
             let label = NSTextField(labelWithString: labelText)
@@ -74,7 +74,7 @@ class PreferencesWindowController: NSWindowController {
         func divider() -> NSBox {
             let line = NSBox()
             line.boxType = .separator
-            line.frame = NSRect(x: 24, y: y + 10, width: 432, height: 1)
+            line.frame = NSRect(x: 24, y: y + 10, width: 472, height: 1)
             content.addSubview(line)
             y -= 20
             return line
@@ -91,7 +91,7 @@ class PreferencesWindowController: NSWindowController {
         connectionModeSegment = NSSegmentedControl(
             labels: ["Direct (Local)", "SSH Tunnel"], trackingMode: .selectOne, target: self,
             action: #selector(modeChanged))
-        connectionModeSegment.frame = NSRect(x: 164, y: y - 2, width: 260, height: 22)
+        connectionModeSegment.frame = NSRect(x: 164, y: y - 2, width: 300, height: 22)
         let mode = UserDefaults.standard.string(forKey: "connectionMode") ?? "direct"
         connectionModeSegment.selectedSegment = mode == "ssh" ? 1 : 0
         content.addSubview(connectionModeSegment)
@@ -132,12 +132,25 @@ class PreferencesWindowController: NSWindowController {
         targetURLField = row(
             "Target URL", placeholder: "http://localhost:8787", defaultsKey: "targetURL")
 
+        // Global shortcut hint (fix #35)
+        let shortcutLabel = NSTextField(labelWithString: "Global shortcut:")
+        shortcutLabel.font = NSFont.systemFont(ofSize: 13)
+        shortcutLabel.frame = NSRect(x: 24, y: y, width: 130, height: 22)
+        shortcutLabel.alignment = .right
+        content.addSubview(shortcutLabel)
+        let shortcutValue = NSTextField(labelWithString: "⌘⇧H — bring Hermes forward from any app")
+        shortcutValue.font = NSFont.systemFont(ofSize: 13)
+        shortcutValue.textColor = .secondaryLabelColor
+        shortcutValue.frame = NSRect(x: 164, y: y, width: 330, height: 22)
+        content.addSubview(shortcutValue)
+        y -= 36
+
         // Notifications toggle (fix #28)
         notificationsCheckbox = NSButton(
             checkboxWithTitle: "Show a notification when a response completes while the app is in the background",
             target: self,
             action: #selector(toggleNotifications(_:)))
-        notificationsCheckbox.frame = NSRect(x: 164, y: y, width: 290, height: 22)
+        notificationsCheckbox.frame = NSRect(x: 164, y: y, width: 330, height: 22)
         notificationsCheckbox.state =
             UserDefaults.standard.bool(forKey: "notificationsEnabled") ? .on : .off
         content.addSubview(notificationsCheckbox)
@@ -148,7 +161,7 @@ class PreferencesWindowController: NSWindowController {
             checkboxWithTitle: "Launch at login",
             target: self,
             action: #selector(toggleLaunchAtLogin(_:)))
-        launchAtLoginCheckbox.frame = NSRect(x: 164, y: y, width: 260, height: 22)
+        launchAtLoginCheckbox.frame = NSRect(x: 164, y: y, width: 300, height: 22)
         content.addSubview(launchAtLoginCheckbox)
 
         if #available(macOS 13.0, *) {
@@ -159,7 +172,7 @@ class PreferencesWindowController: NSWindowController {
             let note = NSTextField(labelWithString: "Requires macOS 13 or later")
             note.font = NSFont.systemFont(ofSize: 11)
             note.textColor = .secondaryLabelColor
-            note.frame = NSRect(x: 294, y: y, width: 180, height: 22)
+            note.frame = NSRect(x: 294, y: y, width: 210, height: 22)
             content.addSubview(note)
         }
         y -= 36
@@ -167,13 +180,13 @@ class PreferencesWindowController: NSWindowController {
         // Buttons
         let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelBtn.bezelStyle = .rounded
-        cancelBtn.frame = NSRect(x: 264, y: 16, width: 90, height: 32)
+        cancelBtn.frame = NSRect(x: 254, y: 16, width: 90, height: 32)
         content.addSubview(cancelBtn)
 
         let saveBtn = NSButton(title: "Save & Reconnect", target: self, action: #selector(save))
         saveBtn.bezelStyle = .rounded
         saveBtn.keyEquivalent = "\r"
-        saveBtn.frame = NSRect(x: 362, y: 16, width: 100, height: 32)
+        saveBtn.frame = NSRect(x: 356, y: 16, width: 140, height: 32)
         content.addSubview(saveBtn)
 
         let testBtn = NSButton(title: "Test Connection", target: self, action: #selector(testConnection))

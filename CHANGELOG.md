@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.2.2] — 2026-04-20
+
+### Fixed
+- **Preferences window truncation** — widened window from 480 to 520px. "Save & Reconnect" button width increased (100 → 140px) so the label no longer clips. Notification checkbox width increased (290 → 330px) to fit the full label. All section headers, dividers, and input fields scaled accordingly. (fixes #34)
+
+### Added
+- **Window → Show Hermes (⌘⇧H)** — menu item in the Window menu that mirrors the global hotkey, making it discoverable. Teaches the shortcut to users who scan menus. (fixes #35)
+- **Preferences: global shortcut label** — read-only "Global shortcut: ⌘⇧H — bring Hermes forward from any app" row in the APP section of Preferences. (fixes #35)
+- **README: Keyboard shortcuts table** — new section listing all six keyboard shortcuts including the global ⌘⇧H. (fixes #35)
+
 ## [v1.2.1] — 2026-04-20
 
 ### Fixed
