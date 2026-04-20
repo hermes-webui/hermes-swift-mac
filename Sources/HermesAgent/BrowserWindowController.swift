@@ -42,6 +42,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
     /// can trigger on the same load event during teardown).
     private var didReportNavigationFailure = false
+    /// The UserDefaults autosave name for the main window frame.
+    /// Used for both windowFrameAutosaveName and the derived "NSWindow Frame <name>" key.
+    private static let windowAutosaveName = "HermesMainWindow"
     /// Throttle the mic-denied alert to once per app session — avoids spamming if the
     /// user hits the mic button multiple times after having denied access.
     private static var didShowMicDeniedAlert = false
@@ -76,9 +79,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Setting it on the window before super.init is clobbered by the controller's
         // own empty windowFrameAutosaveName during its setup. The controller property
         // handles both save and restore atomically.
-        self.windowFrameAutosaveName = "HermesMainWindow"
+        self.windowFrameAutosaveName = Self.windowAutosaveName
         // First launch (no saved frame yet): center the window.
-        if UserDefaults.standard.object(forKey: "NSWindow Frame HermesMainWindow") == nil {
+        if UserDefaults.standard.object(forKey: "NSWindow Frame \(Self.windowAutosaveName)") == nil {
             window.center()
         }
 

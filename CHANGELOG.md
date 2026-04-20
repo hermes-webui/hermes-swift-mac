@@ -1,5 +1,24 @@
 # Changelog
 
+## [v1.3.4] — 2026-04-20
+
+### Fixed
+- **Microphone actually works again** — `getUserMedia()` was failing with `NotAllowedError`
+  even when TCC was `.authorized` (mic enabled in System Settings). Root cause: removing the
+  launch-time `requestMicrophonePermission()` call in v1.3.2 also removed its undocumented
+  side effect of initialising AVFoundation in the host process. The WebContent XPC process
+  has no `audio-input` entitlement of its own and inherits TCC attribution via the host's
+  active AVFoundation session. Without that session, capture fails at the platform layer
+  regardless of the delegate returning `.grant`. Fixed: `warmUpCaptureSubsystem()` calls
+  `AVCaptureDevice.default(for: .audio)` silently at launch — no UI, no prompt, no change
+  in UX — purely to establish the attribution chain that WebContent inherits.
+  (user-reported regression since v1.3.2)
+- **Shared window autosave name constant** — `"HermesMainWindow"` appeared twice in
+  `BrowserWindowController`: once as the `windowFrameAutosaveName` value and once embedded
+  in the derived UserDefaults key `"NSWindow Frame HermesMainWindow"`. Extracted to
+  `private static let windowAutosaveName`. The derived key is now interpolated from the
+  constant, eliminating the drift risk. (reviewer follow-up from #48)
+
 ## [v1.3.3] — 2026-04-20
 
 ### Fixed

@@ -1,3 +1,4 @@
+import AVFoundation
 import Carbon.HIToolbox
 import Cocoa
 import Network
@@ -48,6 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenu()
         seedDefaultsIfNeeded()
+        warmUpCaptureSubsystem()
         setupGlobalHotkey()
         startTunnel()
         startPathMonitor()
@@ -255,6 +257,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pendingReconnect = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    // MARK: - AVFoundation warm-up
+
+    /// Forces AVFoundation to initialize in the host process on launch.
+    /// Required so the WebContent XPC process can inherit the TCC attribution chain
+    /// when WKWebView requests microphone access. Without this call, getUserMedia()
+    /// returns NotAllowedError even when TCC status is .authorized, because WebContent
+    /// has no audio-input entitlement of its own and relies on the host process having
+    /// an active AVFoundation session. No OS prompt, no UI — this is a silent warm-up.
+    private func warmUpCaptureSubsystem() {
+        _ = AVCaptureDevice.default(for: .audio)
     }
 
     func setupMenu() {
