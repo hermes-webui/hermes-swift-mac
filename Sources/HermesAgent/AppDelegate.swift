@@ -28,6 +28,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Register non-persistent defaults so users upgrading from v1.1.0
+        // (where notifications were always on) don't silently lose them.
+        // seedDefaultsIfNeeded only persists on first-ever launch.
+        UserDefaults.standard.register(defaults: ["notificationsEnabled": true])
+
         // Initialize Sparkle updater — feed URL comes from SUFeedURL in Info.plist
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
@@ -319,9 +324,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        // Retain self for the C callback. Released in applicationWillTerminate.
-        let selfPtr = Unmanaged.passRetained(self).toOpaque()
-        InstallApplicationEventHandler(
+        // passUnretained is safe: NSApp owns its delegate for the app lifetime,
+        // and the handler is removed in applicationWillTerminate before teardown.
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        // InstallApplicationEventHandler is a C macro Swift can't import — call
+        // the underlying InstallEventHandler with GetApplicationEventTarget() directly.
+        InstallEventHandler(
+            GetApplicationEventTarget(),
             { _, _, userData -> OSStatus in
                 guard let ptr = userData else { return noErr }
                 let delegate = Unmanaged<AppDelegate>.fromOpaque(ptr).takeUnretainedValue()
@@ -334,7 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             1, &eventSpec, selfPtr, &carbonEventHandler
         )
-        var hkID = EventHotKeyID(signature: OSType(0x4845_524D), id: 1)  // 'HERM'
+        let hkID = EventHotKeyID(signature: OSType(0x4845_524D), id: 1)  // 'HERM'
         RegisterEventHotKey(
             UInt32(kVK_ANSI_H),
             UInt32(cmdKey | shiftKey),

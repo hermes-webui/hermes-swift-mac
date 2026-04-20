@@ -33,7 +33,9 @@ class PreferencesWindowController: NSWindowController {
 
     private func buildUI() {
         let content = window!.contentView!
-        var y: CGFloat = 460
+        // Starting y must shift with the window height bump; otherwise the new
+        // Notifications row pushes launchAtLogin into the Save/Cancel buttons.
+        var y: CGFloat = 496
 
         func sectionHeader(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
