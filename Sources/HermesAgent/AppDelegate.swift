@@ -313,6 +313,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        // Find submenu (fix #37/#45 — makes Cmd+F discoverable via menu)
+        let findMenuItem = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+        let findMenu = NSMenu(title: "Find")
+        findMenu.addItem(
+            withTitle: "Find…", action: #selector(openFind), keyEquivalent: "f")
+        let findNextItem = NSMenuItem(
+            title: "Find Next", action: #selector(findNext), keyEquivalent: "g")
+        findMenu.addItem(findNextItem)
+        let findPrevItem = NSMenuItem(
+            title: "Find Previous", action: #selector(findPrev), keyEquivalent: "G")
+        findPrevItem.keyEquivalentModifierMask = [.command, .shift]
+        findMenu.addItem(findPrevItem)
+        findMenuItem.submenu = findMenu
+        editMenu.addItem(findMenuItem)
         let windowMenuItem = NSMenuItem()
         menuBar.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
@@ -361,6 +376,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func reloadPage() {
         browserWindow?.webViewForZoom?.reload()
+    }
+
+    // MARK: - Find forwarding (fix #37/#45 — menu items delegate to BrowserWindowController)
+
+    @objc func openFind() {
+        // Toggle the find bar — if already open, Cmd+F closes it (standard macOS behaviour)
+        (browserWindow?.window as? BrowserWindow)?.onFind?()
+    }
+
+    @objc func findNext() {
+        (browserWindow?.window as? BrowserWindow)?.onFindNext?()
+    }
+
+    @objc func findPrev() {
+        (browserWindow?.window as? BrowserWindow)?.onFindPrev?()
     }
 
     // MARK: - Open in system browser (bonus feature)
