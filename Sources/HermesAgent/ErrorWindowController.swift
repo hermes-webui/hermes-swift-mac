@@ -46,7 +46,8 @@ class ErrorWindowController: NSWindowController {
 
         let descText = mode == "ssh"
             ? "The SSH tunnel may not be established, or hermes-webui may not be running on the remote server."
-            : "Make sure hermes-webui is running on the target URL. Start it with:\ncd ~/hermes-webui-public && bash start.sh"
+            : "Make sure hermes-webui is running and listening at the URL above.\n"
+              + "Run: bash start.sh (or: docker compose up -d)"
         let desc = NSTextField(wrappingLabelWithString: descText)
         desc.font = NSFont.systemFont(ofSize: 12)
         desc.textColor = .secondaryLabelColor

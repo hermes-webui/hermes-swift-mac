@@ -1,5 +1,27 @@
 # Changelog
 
+## [v1.4.0] — 2026-04-23
+
+### Fixed
+- **White flash on startup eliminated (for real this time)** — the window is now started
+  with `alphaValue = 0` and fades in (0.15s) on `didFinishNavigation` — the point at which
+  WKWebView has actually painted its first frame. A `hasCompletedFirstPaint` flag ensures
+  the animation only fires once; SPA route changes and Cmd+R reloads are unaffected.
+  Additionally, the NSWindow frame background and the WKWebView pre-paint `documentStart`
+  script are both set to `#1a1a1a` (dark) regardless of the system colour scheme, so any
+  gap between window-visible and first paint is never white in any situation. Closes #52.
+
+### Added
+- **Find in page — Cmd+F** — pressing Cmd+F opens a native find bar (NSSearchField overlay
+  with vibrancy) anchored below the title bar. `‹` / `›` buttons and Cmd+G / Cmd+Shift+G
+  cycle through results via `window.find()` JS. Pressing Done or Escape closes the bar.
+  Closes #37, closes #45.
+
+### Changed
+- **Connection error copy no longer hardcodes `~/hermes-webui-public`** — the error
+  window now says "Run: bash start.sh (or: docker compose up -d)" instead of the path
+  that only applied to one specific install layout. Closes #40.
+
 ## [v1.3.6] — 2026-04-20
 
 ### Fixed

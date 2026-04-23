@@ -159,6 +159,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if mode == "ssh", let host = sshHost, let port = localPort {
             browser.updateStatus(tunnelManager.status, host: host, port: port)
         }
+        // Fix #52: set alphaValue=0 BEFORE showWindow — prevents a brief
+        // visible-at-full-opacity tick. The window fades in on first WKWebView paint.
+        // backgroundColor is already set to #1a1a1a in BrowserWindowController.init.
+        browser.window?.alphaValue = 0
         browser.showWindow(nil)
         browserWindow = browser
 

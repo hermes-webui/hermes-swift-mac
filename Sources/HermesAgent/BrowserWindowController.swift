@@ -5,10 +5,34 @@ import WebKit
 
 class BrowserWindow: NSWindow {
     var onPaste: (() -> Void)?
+    var onFind: (() -> Void)?
+    var onFindNext: (() -> Void)?
+    var onFindPrev: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+        // Cmd+V: route to the web view paste handler — but NOT when a native
+        // text field (e.g. the find bar's NSSearchField) is focused.
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "v",
+           !(firstResponder is NSText) {
             onPaste?()
+            return true
+        }
+        // Cmd+F: open find bar (fix #37/#45)
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "f" {
+            onFind?()
+            return true
+        }
+        // Cmd+G: find next; Cmd+Shift+G: find previous (fix #37/#45)
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "g" {
+            onFindNext?()
+            return true
+        }
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift],
+           event.charactersIgnoringModifiers == "G" {
+            onFindPrev?()
             return true
         }
         return super.performKeyEquivalent(with: event)
@@ -42,6 +66,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
     /// can trigger on the same load event during teardown).
     private var didReportNavigationFailure = false
+    /// Tracks whether the first navigation paint has occurred, so the fade-in
+    /// animation (fix #52) only fires once — not on every SPA route change.
+    private var hasCompletedFirstPaint = false
+    // Find bar (fix #37/#45)
+    private var findBar: NSView?
+    private var findField: NSSearchField?
+    private var findBarVisible = false
     /// The UserDefaults autosave name for the main window frame.
     /// Used for both windowFrameAutosaveName and the derived "NSWindow Frame <name>" key.
     private static let windowAutosaveName = "HermesMainWindow"
@@ -69,9 +100,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             defer: false
         )
         window.title = title
-        // Fix #23: set native window background to dark before content loads,
-        // so there's no white frame visible while WKWebView is initializing.
-        window.backgroundColor = .windowBackgroundColor
+        // Fix #23 + #52: set native window background to a dark colour before
+        // content loads. Using a literal dark value (not windowBackgroundColor)
+        // ensures the gap between window-visible and first-paint is dark in
+        // *all* colour schemes — windowBackgroundColor is white in light mode.
+        window.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
         super.init(window: window)
 
         // Persist and restore window frame across launches.
@@ -87,6 +120,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         window.onPaste = { [weak self] in
             self?.handlePaste()
+        }
+        window.onFind = { [weak self] in
+            self?.toggleFindBar()
+        }
+        window.onFindNext = { [weak self] in
+            self?.findNext(forward: true)
+        }
+        window.onFindPrev = { [weak self] in
+            self?.findNext(forward: false)
         }
         window.delegate = self
 
@@ -186,18 +228,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // before the first paint — otherwise the WebView renders white while
         // the dark theme is still loading from the server.
         if #available(macOS 12.0, *) {
-            webView.underPageBackgroundColor = .windowBackgroundColor
+            // Fix #52: match the pre-paint dark background so the overscroll gutter
+            // is dark too — not white, regardless of system colour scheme.
+            webView.underPageBackgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
         }
-        // Fallback for older OS: inject a documentStart script that sets the
-        // background immediately before the first paint.
+        // Fix #52: inject a documentStart script that always sets the document
+        // background to match our pre-paint NSWindow dark background (#1a1a1a),
+        // regardless of colour scheme. This eliminates any FOUC during the HTTP
+        // round-trip — even if the window becomes visible early, both the native
+        // frame and the WebView show the same dark colour.
+        // Once the app's actual CSS loads, it overrides this with the correct theme.
         let darkModeScript = WKUserScript(
             source: """
                 (function() {
-                    var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                    if (isDark) {
-                        document.documentElement.style.background = '#1a1a1a';
-                        document.body && (document.body.style.background = '#1a1a1a');
-                    }
+                    document.documentElement.style.background = '#1a1a1a';
+                    if (document.body) { document.body.style.background = '#1a1a1a'; }
                 })();
                 """,
             injectionTime: .atDocumentStart,
@@ -458,9 +503,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
     }
 
-    // MARK: - Zoom level restore (fix #43)
+    // MARK: - Zoom level restore (fix #43) + startup fade-in (fix #52)
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Fix #52: fade the window in on the very first successful paint.
+        // Uses a bool flag (not alphaValue check) to be robust against any
+        // intermediate alpha changes. Subsequent navigations (SPA routes,
+        // Cmd+R reloads) see hasCompletedFirstPaint=true and skip the animation.
+        if !hasCompletedFirstPaint {
+            hasCompletedFirstPaint = true
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                window?.animator().alphaValue = 1
+            }
+        }
+
         // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
         // treat any value outside the valid zoom range as "no preference".
         let saved = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
@@ -478,6 +535,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        // Fix #52: ensure the window is visible before we close/replace it.
+        // If the very first navigation fails, didFinishNavigation never fires,
+        // so the window stays at alphaValue=0. Restore it so the error window
+        // transition isn't invisible.
+        window?.alphaValue = 1
         let nsError = error as NSError
         // NSURLErrorCancelled fires for link clicks we redirected to Safari —
         // those aren't real failures, ignore them.
@@ -606,6 +668,123 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     func windowWillClose(_ notification: Notification) {
         stopHealthCheck()
+        hideFindBar()
+    }
+
+    // MARK: - Find in page (fix #37/#45, Cmd+F)
+    // Uses window.find() JS (macOS 12+ via WKWebView.evaluateJavaScript) with a
+    // native NSSearchField overlay. NSTextFinder bridging would give a more
+    // native look but requires implementing NSTextFinderClient over a WebView —
+    // not worth the complexity for a thin wrapper app.
+
+    private func toggleFindBar() {
+        if findBarVisible {
+            hideFindBar()
+        } else {
+            showFindBar()
+        }
+    }
+
+    private func showFindBar() {
+        guard findBar == nil, let contentView = window?.contentView else { return }
+        findBarVisible = true
+
+        let barHeight: CGFloat = 36
+        let bar = NSVisualEffectView(frame: NSRect(
+            x: 0, y: contentView.bounds.height - barHeight,
+            width: contentView.bounds.width, height: barHeight))
+        bar.autoresizingMask = [.width, .minYMargin]
+        bar.blendingMode = .withinWindow
+        bar.material = .headerView  // .titlebar is deprecated; .headerView is the modern equivalent
+        bar.state = .active
+        contentView.addSubview(bar)
+        findBar = bar
+
+        let field = NSSearchField(frame: NSRect(x: 8, y: 5, width: 220, height: 24))
+        field.placeholderString = "Find in page…"
+        field.sendsSearchStringImmediately = true
+        field.target = self
+        field.action = #selector(findFieldChanged(_:))
+        bar.addSubview(field)
+        findField = field
+
+        let prevBtn = NSButton(title: "\u{2039}", target: self, action: #selector(findPrevTapped))
+        prevBtn.bezelStyle = .rounded
+        prevBtn.font = NSFont.systemFont(ofSize: 15)
+        prevBtn.frame = NSRect(x: 234, y: 4, width: 28, height: 26)
+        bar.addSubview(prevBtn)
+
+        let nextBtn = NSButton(title: "\u{203A}", target: self, action: #selector(findNextTapped))
+        nextBtn.bezelStyle = .rounded
+        nextBtn.font = NSFont.systemFont(ofSize: 15)
+        nextBtn.frame = NSRect(x: 264, y: 4, width: 28, height: 26)
+        bar.addSubview(nextBtn)
+
+        let doneBtn = NSButton(title: "Done", target: self, action: #selector(findDoneTapped))
+        doneBtn.bezelStyle = .rounded
+        doneBtn.font = NSFont.systemFont(ofSize: 12)
+        doneBtn.frame = NSRect(x: 298, y: 4, width: 52, height: 26)
+        bar.addSubview(doneBtn)
+
+        // Shrink webView to make room for the bar
+        webView.frame.size.height -= barHeight
+        window?.makeFirstResponder(field)
+    }
+
+    private func hideFindBar() {
+        guard let bar = findBar else { return }
+        findBarVisible = false
+        bar.removeFromSuperview()
+        findBar = nil
+        findField = nil
+        // Restore webView height
+        if let contentView = window?.contentView {
+            let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
+            webView.frame = NSRect(
+                x: 0, y: statusBarHeight,
+                width: contentView.bounds.width,
+                height: contentView.bounds.height - statusBarHeight)
+        }
+        window?.makeFirstResponder(webView)
+    }
+
+    // cancelOperation is sent by AppKit when the user presses Escape while
+    // the find field is first responder. Closing the bar here satisfies the
+    // CHANGELOG claim that Escape dismisses the bar.
+    override func cancelOperation(_ sender: Any?) {
+        if findBarVisible {
+            hideFindBar()
+        } else {
+            super.cancelOperation(sender)
+        }
+    }
+
+    @objc private func findFieldChanged(_ sender: NSSearchField) {
+        runFind(query: sender.stringValue, forward: true)
+    }
+
+    @objc private func findNextTapped() { findNext(forward: true) }
+    @objc private func findPrevTapped() { findNext(forward: false) }
+    @objc private func findDoneTapped() { hideFindBar() }
+
+    private func findNext(forward: Bool) {
+        guard let q = findField?.stringValue, !q.isEmpty else {
+            if !findBarVisible { showFindBar() }
+            return
+        }
+        runFind(query: q, forward: forward)
+    }
+
+    private func runFind(query: String, forward: Bool) {
+        guard !query.isEmpty else { return }
+        // window.find(aString, caseSensitive, backwards, wrapAround, wholeWord, searchInFrames, showDialog)
+        // Escape backslashes and single-quotes to make the query safe inside the JS string literal.
+        let escaped = query
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        let backwards = forward ? "false" : "true"
+        let js = "window.find('\(escaped)', false, \(backwards), true, false, true, false);"
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     // MARK: - Microphone / camera permissions
