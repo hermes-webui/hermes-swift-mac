@@ -1,5 +1,12 @@
 # Changelog
 
+## [v1.4.1] — 2026-04-23
+
+### Added
+- **Find submenu in Edit menu** — Edit → Find → Find… (Cmd+F), Find Next (Cmd+G),
+  Find Previous (Cmd+Shift+G). Makes the find feature discoverable via the standard
+  macOS menu convention instead of requiring users to know the shortcut.
+
 ## [v1.4.0] — 2026-04-23
 
 ### Fixed
