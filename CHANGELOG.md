@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **White flash on startup eliminated** — the window was made visible via `showWindow(nil)` before WKWebView had painted its first frame, causing a white flash on any color scheme (not just dark mode). The v1.1.0 fix set `underPageBackgroundColor` but missed this window-level gap. Fix: `alphaValue` is set to `0` before `showWindow`, then faded to `1` in `didFinishNavigation` on the first successful paint (0.15s animation). `didFailProvisionalNavigation` also restores alpha before handing off to the error window. Closes #52. (`AppDelegate.swift`, `BrowserWindowController.swift`)
+
 ## [v1.3.6] — 2026-04-20
 
 ### Fixed

@@ -160,6 +160,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             browser.updateStatus(tunnelManager.status, host: host, port: port)
         }
         browser.showWindow(nil)
+        browser.window?.alphaValue = 0  // hidden until first paint (fix #52)
         browserWindow = browser
 
         // Restore full-screen state (fix #43)

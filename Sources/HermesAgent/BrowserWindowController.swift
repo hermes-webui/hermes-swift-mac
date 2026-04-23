@@ -461,6 +461,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     // MARK: - Zoom level restore (fix #43)
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Fix #52: fade the window in on first successful paint, eliminating the
+        // white flash caused by the window being visible before WKWebView renders.
+        // alphaValue is set to 0 in AppDelegate.openBrowser(); restore it here.
+        // Subsequent navigations (reloads, SPA routes) leave alpha at 1 — no-op.
+        if window?.alphaValue == 0 {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                window?.animator().alphaValue = 1
+            }
+        }
+
         // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
         // treat any value outside the valid zoom range as "no preference".
         let saved = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
@@ -478,6 +489,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        // Ensure the window is visible before we close/replace it — in case the
+        // first navigation fails before didFinishNavigation ever fires (fix #52).
+        window?.alphaValue = 1
         let nsError = error as NSError
         // NSURLErrorCancelled fires for link clicks we redirected to Safari —
         // those aren't real failures, ignore them.
