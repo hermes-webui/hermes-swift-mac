@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.5.2] — 2026-04-25
+
+### Fixed
+- **Title bar text re-centered** — v1.5.1 hid the `.app-titlebar-icon` with `display: none`,
+  which collapsed its layout space and shifted the title text left. Changed to
+  `visibility: hidden` so the icon is invisible but still occupies its flex slot, keeping
+  the title centered as intended. Closes #61.
+
 ## [v1.5.1] — 2026-04-25
 
 ### Fixed
