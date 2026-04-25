@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.5.1] — 2026-04-25
+
+### Fixed
+- **Title bar icon no longer overlaps traffic lights** — the web app's `.app-titlebar-icon`
+  SVG logo is hidden when running inside the Mac wrapper via an injected `documentStart`
+  stylesheet. With `.fullSizeContentView` (added in v1.5.0) the icon appeared right next
+  to the close button. The rest of the web title bar is unaffected. Closes #59.
+
 ## [v1.5.0] — 2026-04-25
 
 ### Added
