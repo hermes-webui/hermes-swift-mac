@@ -265,6 +265,23 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         config.userContentController.addUserScript(trafficLightScript)
 
+        // Fix #59: hide the web app's .app-titlebar-icon (SVG logo) when running in the
+        // Mac wrapper. With .fullSizeContentView the icon sits right next to the traffic
+        // lights and overlaps the close button. The window title and other title bar
+        // controls are unaffected.
+        let hideIconScript = WKUserScript(
+            source: """
+                (function() {
+                    const s = document.createElement('style');
+                    s.textContent = '.app-titlebar-icon { display: none !important; }';
+                    (document.head || document.documentElement).appendChild(s);
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(hideIconScript)
+
         contentView.addSubview(webView)
 
         // Only add status bar in SSH mode
