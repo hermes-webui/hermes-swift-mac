@@ -58,9 +58,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var statusDot: NSView!
     private var statusLabel: NSTextField!
     private var reconnectButton: NSButton!
-    private let urlString: String
+    private(set) var urlString: String
     private let appTitle: String
-    private let connectionMode: String
+    private(set) var connectionMode: String
     var onReconnect: (() -> Void)?
     var onNavigationFailed: (() -> Void)?
     /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
@@ -95,7 +95,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 830),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -106,6 +106,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // *all* colour schemes — windowBackgroundColor is white in light mode.
         window.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
         super.init(window: window)
+
+        // Fix #57: extend web content under the native title bar.
+        // titleVisibility = .hidden removes the text draw; window.title stays set
+        // (Window menu, Dock, accessibility, Mission Control).
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
 
         // Persist and restore window frame across launches.
         // Must be set on the NSWindowController (self), not on the raw NSWindow.
@@ -249,6 +255,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(darkModeScript)
+
+        // Fix #57: inject default traffic light clearance at documentStart.
+        // Refined to exact measured pixels in injectTrafficLightWidthVar() after didFinish.
+        let trafficLightScript = WKUserScript(
+            source: "document.documentElement.style.setProperty('--traffic-light-width', '80px');",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(trafficLightScript)
 
         contentView.addSubview(webView)
 
@@ -518,12 +533,33 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             }
         }
 
+        // Fix #57: refine traffic light clearance to exact measured value.
+        injectTrafficLightWidthVar()
+
         // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
         // treat any value outside the valid zoom range as "no preference".
         let saved = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
         if saved >= 0.5 && saved <= 3.0 {
             webView.magnification = saved
         }
+    }
+
+    /// Measures the actual right edge of the zoom (green) traffic light button and
+    /// injects it as --traffic-light-width CSS custom property so the web title bar
+    /// leaves correct clearance. Called after first paint and fullscreen transitions.
+    private func injectTrafficLightWidthVar() {
+        let reserve: CGFloat
+        if let zoom = window?.standardWindowButton(.zoomButton) {
+            // .frame is in NSThemeFrame coords = window-space in the title-bar strip.
+            reserve = zoom.frame.maxX + 12
+        } else {
+            reserve = 80
+        }
+        let px = Int(reserve)
+        webView.evaluateJavaScript(
+            "document.documentElement.style.setProperty('--traffic-light-width', '\(px)px');",
+            completionHandler: nil
+        )
     }
 
     // MARK: - Navigation failure
@@ -658,12 +694,42 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         UserDefaults.standard.set(true, forKey: "windowWasFullScreen")
+        // Fix #57: in fullscreen the traffic lights are gone; reset clearance to 0.
+        webView.evaluateJavaScript(
+            "document.documentElement.style.setProperty('--traffic-light-width', '0px');",
+            completionHandler: nil
+        )
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
         // Don't clobber the saved preference during a programmatic reconnect close.
         guard !isIntentionalClose else { return }
         UserDefaults.standard.set(false, forKey: "windowWasFullScreen")
+        // Fix #57: restore traffic light clearance after exiting fullscreen.
+        injectTrafficLightWidthVar()
+    }
+
+    // MARK: - Reconnect in place (fix #10)
+
+    /// Reconnect without destroying the WKWebView, preserving cookies,
+    /// localStorage, IndexedDB, and scroll position. Called by AppDelegate
+    /// when a reconnect is needed and the window is still alive.
+    func reconnectInPlace(targetURL newURLString: String) {
+        // Reset dedup flag so a real failure on this attempt routes to error window.
+        didReportNavigationFailure = false
+        // Defensive: ensures windowDidExitFullScreen doesn't no-op after reconnect.
+        isIntentionalClose = false
+        // Stop in-flight provisional load to prevent zombie didFailProvisionalNavigation.
+        webView.stopLoading()
+        let sameURL = (newURLString == urlString)
+        if sameURL {
+            webView.reload()
+        } else {
+            urlString = newURLString
+            if let url = URL(string: newURLString) {
+                webView.load(URLRequest(url: url))
+            }
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -690,8 +756,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         findBarVisible = true
 
         let barHeight: CGFloat = 36
+        // Fix #57 interaction: with .fullSizeContentView the contentView extends under
+        // the title bar. Use contentLayoutRect (the area BELOW the title bar) so the
+        // find bar anchors below the traffic lights, not behind them.
+        let layoutTop = window.map { $0.contentLayoutRect.maxY } ?? contentView.bounds.height
         let bar = NSVisualEffectView(frame: NSRect(
-            x: 0, y: contentView.bounds.height - barHeight,
+            x: 0, y: layoutTop - barHeight,
             width: contentView.bounds.width, height: barHeight))
         bar.autoresizingMask = [.width, .minYMargin]
         bar.blendingMode = .withinWindow
@@ -737,13 +807,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         bar.removeFromSuperview()
         findBar = nil
         findField = nil
-        // Restore webView height
-        if let contentView = window?.contentView {
+        // Restore webView to its normal frame (below title bar, above status bar)
+        if let win = window, let contentView = win.contentView {
             let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
+            let layoutTop = win.contentLayoutRect.maxY
             webView.frame = NSRect(
                 x: 0, y: statusBarHeight,
                 width: contentView.bounds.width,
-                height: contentView.bounds.height - statusBarHeight)
+                height: layoutTop - statusBarHeight)
         }
         window?.makeFirstResponder(webView)
     }

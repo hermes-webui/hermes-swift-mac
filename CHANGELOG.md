@@ -1,5 +1,28 @@
 # Changelog
 
+## [v1.5.0] — 2026-04-25
+
+### Added
+- **Configurable global hotkey** — the hardcoded Cmd+Shift+H shortcut is now user-configurable
+  in Preferences. Click the new recorder field to arm it, press any combo with Cmd/Ctrl/Option,
+  and the shortcut updates immediately. Press Delete while recording to clear (disable) the
+  hotkey. The combo is persisted in UserDefaults and survives app restarts. Closes #41.
+
+### Changed
+- **Full-size content view** — web content now extends under the native macOS title bar using
+  `.fullSizeContentView` + `titlebarAppearsTransparent`. The web app's custom `.app-titlebar`
+  element sits in the title-bar region, eliminating the doubled native/web header. Traffic
+  lights stay visible via a `--traffic-light-width` CSS custom property (default `80px`,
+  refined to the exact measured value after first paint). The variable resets to `0px` in
+  fullscreen and restores on exit. Closes #57.
+
+### Fixed
+- **Session state preserved on reconnect** — tunnel drops, network blips, and manual reconnects
+  no longer destroy the WKWebView. The existing browser window is hidden (orderOut) and reused
+  on reconnect via `reconnectInPlace()`, preserving localStorage, cookies, IndexedDB, and
+  scroll position. The WKWebView is only replaced when the error window takes over on a failed
+  reconnect. Closes #10.
+
 ## [v1.4.1] — 2026-04-23
 
 ### Added
