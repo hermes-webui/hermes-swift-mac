@@ -273,7 +273,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             source: """
                 (function() {
                     const s = document.createElement('style');
-                    s.textContent = '.app-titlebar-icon { display: none !important; }';
+                    s.textContent = '.app-titlebar-icon { visibility: hidden !important; }';
                     (document.head || document.documentElement).appendChild(s);
                 })();
                 """,
