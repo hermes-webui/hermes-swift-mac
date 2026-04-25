@@ -15,10 +15,15 @@ class PreferencesWindowController: NSWindowController {
     private var testResultLabel: NSTextField!
     private var launchAtLoginCheckbox: NSButton!
     private var notificationsCheckbox: NSButton!
+    private var hotkeyRecorder: HotkeyRecorderView!  // Fix #41
+    // Pending hotkey edits — written to UserDefaults only on Save (not immediately)
+    private var pendingHotkeyKeyCode: UInt32?
+    private var pendingHotkeyModifiers: UInt32?
+    private var pendingHotkeyEnabled: Bool?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 592),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 628),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -35,7 +40,7 @@ class PreferencesWindowController: NSWindowController {
         let content = window!.contentView!
         // Starting y must shift with the window height bump; otherwise the new
         // Notifications row pushes launchAtLogin into the Save/Cancel buttons.
-        var y: CGFloat = 532
+        var y: CGFloat = 568
 
         func sectionHeader(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
@@ -132,17 +137,35 @@ class PreferencesWindowController: NSWindowController {
         targetURLField = row(
             "Target URL", placeholder: "http://localhost:8787", defaultsKey: "targetURL")
 
-        // Global shortcut hint (fix #35)
+        // Fix #41: configurable global shortcut — replaced static label with recorder.
         let shortcutLabel = NSTextField(labelWithString: "Global shortcut:")
         shortcutLabel.font = NSFont.systemFont(ofSize: 13)
         shortcutLabel.frame = NSRect(x: 24, y: y, width: 130, height: 22)
         shortcutLabel.alignment = .right
         content.addSubview(shortcutLabel)
-        let shortcutValue = NSTextField(labelWithString: "⌘⇧H — bring Hermes forward from any app")
-        shortcutValue.font = NSFont.systemFont(ofSize: 13)
-        shortcutValue.textColor = .secondaryLabelColor
-        shortcutValue.frame = NSRect(x: 164, y: y, width: 330, height: 22)
-        content.addSubview(shortcutValue)
+
+        let hkDefaults = UserDefaults.standard
+        hotkeyRecorder = HotkeyRecorderView(frame: NSRect(x: 164, y: y - 1, width: 140, height: 24))
+        hotkeyRecorder.keyCode   = UInt32(hkDefaults.integer(forKey: "globalHotkeyKeyCode"))
+        hotkeyRecorder.modifiers = UInt32(hkDefaults.integer(forKey: "globalHotkeyModifiers"))
+        hotkeyRecorder.isEnabled = hkDefaults.bool(forKey: "globalHotkeyEnabled")
+        // Fix #41: defer UserDefaults writes to save() so Cancel discards changes.
+        hotkeyRecorder.onCapture = { [weak self] keyCode, mods in
+            self?.pendingHotkeyKeyCode = keyCode
+            self?.pendingHotkeyModifiers = mods
+            self?.pendingHotkeyEnabled = true
+        }
+        hotkeyRecorder.onClear = { [weak self] in
+            self?.pendingHotkeyEnabled = false
+        }
+        content.addSubview(hotkeyRecorder)
+
+        let hintLabel = NSTextField(labelWithString: "click to change, Delete to clear")
+        hintLabel.font = NSFont.systemFont(ofSize: 11)
+        hintLabel.textColor = .tertiaryLabelColor
+        hintLabel.frame = NSRect(x: 312, y: y + 1, width: 182, height: 20)
+        content.addSubview(hintLabel)
+
         y -= 36
 
         // Notifications toggle (fix #28)
@@ -299,6 +322,10 @@ class PreferencesWindowController: NSWindowController {
             defaults.set(targetURL.absoluteString, forKey: "targetURL")
         }
 
+        // Fix #41: persist pending hotkey edits if any (defer model prevents Cancel wiping them)
+        if let kc = pendingHotkeyKeyCode   { UserDefaults.standard.set(Int(kc), forKey: "globalHotkeyKeyCode") }
+        if let m  = pendingHotkeyModifiers  { UserDefaults.standard.set(Int(m),  forKey: "globalHotkeyModifiers") }
+        if let en = pendingHotkeyEnabled    { UserDefaults.standard.set(en, forKey: "globalHotkeyEnabled") }
         close()
         onSave?()
     }

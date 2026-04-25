@@ -38,7 +38,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Register non-persistent defaults so users upgrading from v1.1.0
         // (where notifications were always on) don't silently lose them.
         // seedDefaultsIfNeeded only persists on first-ever launch.
-        UserDefaults.standard.register(defaults: ["notificationsEnabled": true])
+        UserDefaults.standard.register(defaults: [
+            "notificationsEnabled": true,
+            // Fix #41: default global hotkey = Cmd+Shift+H
+            "globalHotkeyKeyCode": kVK_ANSI_H,
+            "globalHotkeyModifiers": Int(cmdKey | shiftKey),
+            "globalHotkeyEnabled": true,
+        ])
 
         // Initialize Sparkle updater — feed URL comes from SUFeedURL in Info.plist
         updaterController = SPUStandardUpdaterController(
@@ -76,9 +82,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splashSubtitle = connectionMode == "ssh" ? "Establishing SSH tunnel…" : "Connecting…"
         splashWindow = SplashWindowController(title: appTitle, subtitle: splashSubtitle)
         splashWindow.showWindow(nil)
-        browserWindow?.isIntentionalClose = true
-        browserWindow?.close()
-        browserWindow = nil
+        // Fix #10: if the browser window is alive AND the connection mode hasn't changed,
+        // hide it (orderOut) and reuse the WKWebView to preserve session state.
+        // A mode switch (direct↔ssh) must rebuild the window to get the correct status bar.
+        let reuseWindow = browserWindow != nil &&
+            browserWindow?.connectionMode == connectionMode
+        if reuseWindow {
+            browserWindow?.window?.orderOut(nil)
+        } else {
+            browserWindow?.isIntentionalClose = true
+            browserWindow?.close()
+            browserWindow = nil
+        }
         errorWindow?.close()
         errorWindow = nil
         tunnelManager?.stop()
@@ -110,13 +125,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.splashWindow.close()
                     if self.tunnelManager.status == .connected {
-                        self.openBrowser(
-                            targetURL: targetURL,
-                            mode: "ssh",
-                            sshHost: host,
-                            localPort: localPort
-                        )
+                        if reuseWindow, let existing = self.browserWindow {
+                            // Fix #10: reuse existing WKWebView for session continuity.
+                            existing.reconnectInPlace(targetURL: targetURL)
+                            existing.window?.makeKeyAndOrderFront(nil)
+                            self.setOfflineBadge(false)
+                        } else {
+                            self.openBrowser(
+                                targetURL: targetURL,
+                                mode: "ssh",
+                                sshHost: host,
+                                localPort: localPort
+                            )
+                        }
                     } else {
+                        self.browserWindow = nil  // abandon the hidden window
                         self.showErrorWindow(targetURL: targetURL, mode: "ssh")
                     }
                 }
@@ -126,13 +149,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self.splashWindow.close()
                     if reachable {
-                        self.openBrowser(
-                            targetURL: targetURL,
-                            mode: "direct",
-                            sshHost: nil,
-                            localPort: nil
-                        )
+                        if reuseWindow, let existing = self.browserWindow {
+                            // Fix #10: reuse existing WKWebView for session continuity.
+                            existing.reconnectInPlace(targetURL: targetURL)
+                            existing.window?.makeKeyAndOrderFront(nil)
+                            self.setOfflineBadge(false)
+                        } else {
+                            self.openBrowser(
+                                targetURL: targetURL,
+                                mode: "direct",
+                                sshHost: nil,
+                                localPort: nil
+                            )
+                        }
                     } else {
+                        self.browserWindow = nil  // abandon the hidden window
                         self.showErrorWindow(targetURL: targetURL, mode: "direct")
                     }
                 }
@@ -427,6 +458,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if preferencesWindow == nil {
             preferencesWindow = PreferencesWindowController()
             preferencesWindow?.onSave = { [weak self] in
+                self?.reloadGlobalHotkey()  // Fix #41: apply new hotkey from UserDefaults
                 self?.preferencesWindow = nil
                 self?.startTunnel()
             }
@@ -439,7 +471,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Uses Carbon RegisterEventHotKey — works without Accessibility permission,
     // fires from any app immediately on first launch.
 
+    // MARK: - Global hotkey (configurable, fix #6 + #41)
+
     private func setupGlobalHotkey() {
+        let defaults = UserDefaults.standard
+        // Fix #41: check enabled flag; skip registration when user cleared the shortcut.
+        guard defaults.bool(forKey: "globalHotkeyEnabled") else { return }
+        let keyCode = UInt32(defaults.integer(forKey: "globalHotkeyKeyCode"))
+        let mods    = UInt32(defaults.integer(forKey: "globalHotkeyModifiers"))
+
         var eventSpec = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
@@ -449,31 +489,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         // InstallApplicationEventHandler is a C macro Swift can't import — call
         // the underlying InstallEventHandler with GetApplicationEventTarget() directly.
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, userData -> OSStatus in
-                guard let ptr = userData else { return noErr }
-                let delegate = Unmanaged<AppDelegate>.fromOpaque(ptr).takeUnretainedValue()
-                DispatchQueue.main.async {
-                    delegate.browserWindow?.showWindow(nil)
-                    delegate.browserWindow?.window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                return noErr
-            },
-            1, &eventSpec, selfPtr, &carbonEventHandler
-        )
+        // Install only once; carbonEventHandler is reused on reloadGlobalHotkey.
+        if carbonEventHandler == nil {
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                { _, _, userData -> OSStatus in
+                    guard let ptr = userData else { return noErr }
+                    let delegate = Unmanaged<AppDelegate>.fromOpaque(ptr).takeUnretainedValue()
+                    DispatchQueue.main.async {
+                        delegate.browserWindow?.showWindow(nil)
+                        delegate.browserWindow?.window?.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                    return noErr
+                },
+                1, &eventSpec, selfPtr, &carbonEventHandler
+            )
+        }
         let hkID = EventHotKeyID(signature: OSType(0x4845_524D), id: 1)  // 'HERM'
         let status = RegisterEventHotKey(
-            UInt32(kVK_ANSI_H),
-            UInt32(cmdKey | shiftKey),
+            keyCode,
+            mods,
             hkID,
             GetApplicationEventTarget(),
             0,
             &carbonHotKeyRef
         )
         if status != noErr {
-            NSLog("[HermesAgent] RegisterEventHotKey failed (OSStatus %d) — Cmd+Shift+H may already be claimed by another app.", status)
+            NSLog("[HermesAgent] RegisterEventHotKey failed (OSStatus %d)", status)
+        }
+    }
+
+    /// Re-register the global hotkey with the current UserDefaults values.
+    /// Called from Preferences save when the user changes the shortcut.
+    /// Only unregisters the hotkey ref — the event handler stays installed.
+    func reloadGlobalHotkey() {
+        if let ref = carbonHotKeyRef {
+            UnregisterEventHotKey(ref)
+            carbonHotKeyRef = nil
+        }
+        setupGlobalHotkey()
+        // Warn the user if the new shortcut couldn't be registered
+        // (e.g. Cmd+Space is claimed by Spotlight).
+        if UserDefaults.standard.bool(forKey: "globalHotkeyEnabled") && carbonHotKeyRef == nil {
+            let alert = NSAlert()
+            alert.messageText = "Shortcut unavailable"
+            alert.informativeText = "This shortcut is already claimed by another app. Try a different combination."
+            alert.runModal()
         }
     }
 
