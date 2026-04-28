@@ -45,6 +45,36 @@ private class HermesWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+// Fix #64: transparent drag view that sits atop the WKWebView in the title-bar zone.
+// With .fullSizeContentView + titlebarAppearsTransparent, WKWebView covers the native
+// title bar strip and intercepts all mouse events — killing native window drag.
+// -webkit-app-region: drag in the web page's CSS has no effect on NSWindow dragging.
+// This overlay calls window.performDrag(with:) on mouseDown in the title-bar strip,
+// restoring the expected drag-to-move behaviour. The view is fully transparent
+// (no layer, no drawing) so it has no visual impact. Traffic lights live in
+// NSThemeFrame above contentView and are unaffected.
+private class TitleBarDragView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Double-click: honour the system "Double-click a window's title bar to" preference.
+        if event.clickCount == 2 {
+            let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
+            switch action {
+            case "Minimize": window?.miniaturize(nil)
+            case "Maximize": window?.performZoom(nil)
+            default: break  // "None"
+            }
+            return
+        }
+        // Single click: pass to the window's native drag-to-move handler.
+        window?.performDrag(with: event)
+    }
+    // No hitTest override — default NSView.hitTest is correct (point is in superview coords,
+    // default returns self when point is in frame, nil otherwise).
+    // No isFlipped override — the view has no subviews or drawing; isFlipped is irrelevant.
+}
+
 class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var webView: HermesWebView!
@@ -73,6 +103,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var findBar: NSView?
     private var findField: NSSearchField?
     private var findBarVisible = false
+    /// Fix #64: drag overlay view — kept as a property so it can be resized on window resize.
+    private var titleBarDragView: TitleBarDragView?
     /// The UserDefaults autosave name for the main window frame.
     /// Used for both windowFrameAutosaveName and the derived "NSWindow Frame <name>" key.
     private static let windowAutosaveName = "HermesMainWindow"
@@ -283,6 +315,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         config.userContentController.addUserScript(hideIconScript)
 
         contentView.addSubview(webView)
+
+        // Fix #64: install a thin transparent drag overlay over the title-bar zone.
+        // Height 38px matches .app-titlebar in the web UI. The view is added AFTER
+        // webView so it is on top in z-order, intercepting mouse events before WKWebView.
+        let titleBarHeight: CGFloat = 38
+        // Anchor to the top of contentView (y = bounds.height - 38 to bounds.height),
+        // matching the web UI's .app-titlebar which fills the same zone.
+        // Note: clMaxY (contentLayoutRect.maxY) is the BOTTOM of the native title bar —
+        // using clMaxY - 38 would put the overlay ~28 px below the visual title bar zone.
+        // The web title bar sits at the very top: y ∈ [bounds.height-38, bounds.height].
+        let dragFrame = NSRect(x: 0, y: bounds.height - titleBarHeight, width: bounds.width, height: titleBarHeight)
+        let dragView = TitleBarDragView(frame: dragFrame)
+        dragView.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(dragView)
+        titleBarDragView = dragView
 
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
