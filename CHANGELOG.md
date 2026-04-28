@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.5.3] — 2026-04-28
+### Fixed
+- **Window drag regression** — after the v1.5.0 `.fullSizeContentView` change, the main window could no longer be moved by dragging the title bar. `WKWebView` covers the full content area including the transparent native title bar strip and intercepts all mouse events; `-webkit-app-region: drag` in the web page's CSS has no effect on `NSWindow` dragging. Fixed by adding a thin transparent `TitleBarDragView` overlay positioned over the title bar zone (height 38 px, matching `.app-titlebar` in the web UI) that calls `window.performDrag(with:)` on `mouseDown`. The view is fully transparent and only captures hits within its own bounds. Traffic lights live in `NSThemeFrame` above `contentView` and are unaffected. (fixes #64)
+
 ## [v1.5.2] — 2026-04-25
 
 ### Fixed
