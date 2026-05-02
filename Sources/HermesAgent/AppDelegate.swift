@@ -367,6 +367,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                let host = (NSApp.keyWindow ?? browserWindows.last?.window),
                let newWindow = browser.window {
                 host.addTabbedWindow(newWindow, ordered: .above)
+                // Force every existing browser window to recompute its layout
+                // on the next runloop turn — adding a tab changes the
+                // contentLayoutRect for the whole group, but the tabbedWindows
+                // KVO observer can fire before AppKit has actually updated the
+                // rect. Without this, the formerly-only window's webView keeps
+                // its full-height frame and the chat content shows clipped
+                // through the new tab bar zone (issue user reported as the
+                // "first tab is garbled" bug). Defer to .async so AppKit's
+                // own tab-bar-appearing layout pass runs first.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    for controller in self.browserWindows {
+                        controller.updateWebViewLayout()
+                    }
+                }
             } else if !asTab {
                 browser.window?.tabbingMode = .disallowed
                 // Cascade only for separate windows; tabs share the parent frame.

@@ -1162,7 +1162,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// When the tab bar is absent (single-tab/standalone), we extend webView all
     /// the way to bounds.height so the v1.5.0 "web titlebar under transparent
     /// title bar" look is preserved.
-    private func updateWebViewLayout() {
+    func updateWebViewLayout() {
         guard let win = window, let contentView = win.contentView, webView != nil else { return }
         // Use NSWindowTabGroup.isTabBarVisible — it's true for ≥2 tabs in the group
         // AND for the explicit Window → Show Tab Bar case with a single window (the
