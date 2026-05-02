@@ -43,6 +43,98 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var preferencesWindow: PreferencesWindowController?
     var updaterController: SPUStandardUpdaterController!
 
+    /// The appearance currently in effect for all Hermes windows. Updated by
+    /// BrowserWindowController's theme bridge each time the web UI reports a new
+    /// background colour. New windows (Preferences, Error, Splash, secondary
+    /// browser) read this on init so they open in the matching theme. Defaults
+    /// to .darkAqua so the very first window is dark before the bridge fires
+    /// (matches the hardcoded #1a1a1a pre-paint background).
+    var currentAppearance: NSAppearance? = NSAppearance(named: .darkAqua)
+
+    /// The window background colour matching the current web-UI theme. Used as
+    /// `NSWindow.backgroundColor` on browser windows so the tab-bar strip
+    /// blends with the page instead of showing through the hardcoded
+    /// pre-paint #1a1a1a. Defaults to that #1a1a1a so the very first window
+    /// looks right before the bridge fires.
+    var currentBackgroundColor: NSColor =
+        NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+
+    /// Apply a new appearance + window background colour to every Hermes window.
+    /// Called by the BrowserWindowController theme bridge when the web UI
+    /// reports a new background.
+    func updateAppearance(_ appearance: NSAppearance?, backgroundColor: NSColor? = nil) {
+        let appearanceChanged = appearance?.name != currentAppearance?.name
+        let bgChanged = backgroundColor != nil && backgroundColor != currentBackgroundColor
+        guard appearanceChanged || bgChanged else { return }
+        if appearanceChanged { currentAppearance = appearance }
+        if let bg = backgroundColor { currentBackgroundColor = bg }
+        for browser in browserWindows {
+            if appearanceChanged { browser.window?.appearance = appearance }
+            if let bg = backgroundColor {
+                browser.window?.backgroundColor = bg
+                // Push the colour through to the SSH footer so it matches the
+                // tab-bar strip (which paints with window.backgroundColor) one
+                // to one — same RGB for every chrome surface.
+                browser.applyChromeBackgroundColor(bg)
+            }
+        }
+        if appearanceChanged {
+            preferencesWindow?.window?.appearance = appearance
+            errorWindow?.window?.appearance = appearance
+            splashWindow?.window?.appearance = appearance
+        }
+        // Persist so next launch + new tabs/windows can open with the last-seen
+        // theme instead of flashing dark while the bridge re-checks.
+        if bgChanged { persistCurrentTheme() }
+    }
+
+    // MARK: - Theme cache (UserDefaults)
+
+    private static let themeCacheKeyR = "themeCacheRed"
+    private static let themeCacheKeyG = "themeCacheGreen"
+    private static let themeCacheKeyB = "themeCacheBlue"
+    private static let themeCacheKeyTimestamp = "themeCacheTimestamp"
+    /// How fresh the cache must be to be trusted on launch. Beyond this we
+    /// fall back to .darkAqua / #1a1a1a (the safe default that matches the
+    /// pre-paint dark background, avoiding a white-flash for new users).
+    private static let themeCacheStaleness: TimeInterval = 7 * 24 * 3600
+
+    /// Restore currentAppearance + currentBackgroundColor from UserDefaults if
+    /// the cache is fresh enough. Called once at applicationDidFinishLaunching
+    /// before startTunnel so the splash and the first browser window open with
+    /// the last-seen theme.
+    func loadCachedTheme() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.themeCacheKeyTimestamp) != nil else { return }
+        let timestamp = defaults.double(forKey: Self.themeCacheKeyTimestamp)
+        let age = Date().timeIntervalSince1970 - timestamp
+        guard age >= 0, age < Self.themeCacheStaleness else { return }
+        let r = defaults.double(forKey: Self.themeCacheKeyR)
+        let g = defaults.double(forKey: Self.themeCacheKeyG)
+        let b = defaults.double(forKey: Self.themeCacheKeyB)
+        // Sanity: stored components live in [0, 1]. Reject anything else and
+        // keep the .darkAqua/#1a1a1a defaults so a corrupted store can't
+        // produce a transparent or oversaturated chrome colour.
+        guard (0.0...1.0).contains(r), (0.0...1.0).contains(g), (0.0...1.0).contains(b)
+        else { return }
+        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        let isDark = luminance < 0.5
+        currentAppearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        currentBackgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    /// Write currentBackgroundColor + a fresh timestamp to UserDefaults.
+    private func persistCurrentTheme() {
+        // Convert to sRGB to lock in stable component values regardless of the
+        // colour space the bridge happened to construct (calibrated vs sRGB).
+        let sRGB = currentBackgroundColor.usingColorSpace(.sRGB) ?? currentBackgroundColor
+        let defaults = UserDefaults.standard
+        defaults.set(Double(sRGB.redComponent), forKey: Self.themeCacheKeyR)
+        defaults.set(Double(sRGB.greenComponent), forKey: Self.themeCacheKeyG)
+        defaults.set(Double(sRGB.blueComponent), forKey: Self.themeCacheKeyB)
+        defaults.set(Date().timeIntervalSince1970, forKey: Self.themeCacheKeyTimestamp)
+    }
+
     // Global hotkey state (fix #6, Carbon-based — no Accessibility permission required)
     private var carbonHotKeyRef: EventHotKeyRef?
     private var carbonEventHandler: EventHandlerRef?
@@ -77,6 +169,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenu()
         seedDefaultsIfNeeded()
+        // Restore last-seen theme before any window opens so the splash and the
+        // first browser window paint with the right colour instead of flashing
+        // dark while the bridge runs its first sample.
+        loadCachedTheme()
         warmUpCaptureSubsystem()
         setupGlobalHotkey()
         startTunnel()
@@ -257,18 +353,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             browser.updateStatus(tunnelManager.status, host: host, port: port)
         }
 
-        // Cascade non-first windows from the front-most window so each new window/tab
-        // is visibly stacked. AppKit's tabbing layer ignores this for tabs (they share
-        // the parent frame) but it's the right default for separate-window users.
-        // Persist the next cascade point across calls so rapid Cmd+N produces a clean
-        // diagonal stack rather than every new window cascading from the same anchor.
-        if !isFirstWindow,
-           let win = browser.window,
-           let anchor = (NSApp.keyWindow ?? browserWindows.last?.window) {
-            win.setFrame(anchor.frame, display: false)
-            let from = nextCascadePoint
-                ?? NSPoint(x: anchor.frame.minX, y: anchor.frame.maxY)
-            nextCascadePoint = win.cascadeTopLeft(from: from)
+        // Tabbing decision for non-first windows. We use the explicit
+        // addTabbedWindow API for Cmd+T rather than relying on tabbingMode =
+        // .preferred auto-tab — the auto-tab path is flaky when other state
+        // (e.g. a recently .disallowed sibling, or a prior cascade frame
+        // change) interferes with AppKit's heuristic, which manifests as Cmd+T
+        // opening a separate window instead of joining the existing tab group.
+        // For Cmd+N we still set .disallowed at show-time so the new window
+        // shows standalone, and restore .preferred afterwards so the user can
+        // later merge via Window → Merge All Windows.
+        if !isFirstWindow {
+            if asTab,
+               let host = (NSApp.keyWindow ?? browserWindows.last?.window),
+               let newWindow = browser.window {
+                host.addTabbedWindow(newWindow, ordered: .above)
+                // Force every existing browser window to recompute its layout
+                // on the next runloop turn — adding a tab changes the
+                // contentLayoutRect for the whole group, but the tabbedWindows
+                // KVO observer can fire before AppKit has actually updated the
+                // rect. Without this, the formerly-only window's webView keeps
+                // its full-height frame and the chat content shows clipped
+                // through the new tab bar zone (issue user reported as the
+                // "first tab is garbled" bug). Defer to .async so AppKit's
+                // own tab-bar-appearing layout pass runs first.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    for controller in self.browserWindows {
+                        controller.updateWebViewLayout()
+                    }
+                }
+            } else if !asTab {
+                browser.window?.tabbingMode = .disallowed
+                // Cascade only for separate windows; tabs share the parent frame.
+                if let win = browser.window,
+                   let anchor = (NSApp.keyWindow ?? browserWindows.last?.window) {
+                    win.setFrame(anchor.frame, display: false)
+                    let from = nextCascadePoint
+                        ?? NSPoint(x: anchor.frame.minX, y: anchor.frame.maxY)
+                    nextCascadePoint = win.cascadeTopLeft(from: from)
+                }
+            }
         }
 
         // Fix #52: set alphaValue=0 BEFORE showWindow on the very first window only

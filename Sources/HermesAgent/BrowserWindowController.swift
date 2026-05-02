@@ -136,6 +136,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// and chat content).
     private var tabbedWindowsObservation: NSKeyValueObservation?
 
+    /// KVO observation for webView.title — propagates `document.title` changes
+    /// (i.e. the active conversation's name in hermes-webui) into window.title,
+    /// which is what AppKit shows on the tab.
+    private var pageTitleObservation: NSKeyValueObservation?
+
     /// - Parameter useFrameAutosave: When true (default), the window persists its
     ///   frame to UserDefaults under HermesMainWindow. Only the *first* window of a
     ///   multi-window session should set this true; secondary windows pass false so
@@ -160,7 +165,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // content loads. Using a literal dark value (not windowBackgroundColor)
         // ensures the gap between window-visible and first-paint is dark in
         // *all* colour schemes — windowBackgroundColor is white in light mode.
-        window.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        // Multi-window theme tracking: if AppDelegate already knows the current
+        // theme background colour (a sibling browser window has reported), use
+        // that so this new window/tab opens with the right colour and the tab
+        // bar strip blends correctly. Falls back to the dark pre-paint colour
+        // for the very first window.
+        window.backgroundColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
         super.init(window: window)
 
         // Fix #57: extend web content under the native title bar.
@@ -168,6 +179,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // (Window menu, Dock, accessibility, Mission Control).
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // Initial appearance — matches whatever the web UI is currently using
+        // (tracked on AppDelegate). The theme bridge in buildUI() updates it
+        // dynamically when the page reports its background color, so the
+        // AppKit chrome (title bar, tab bar, traffic lights, status bar) stays
+        // visually consistent with the page across light/dark/system themes.
+        // Falls back to .darkAqua before the bridge has reported.
+        window.appearance = (NSApp.delegate as? AppDelegate)?.currentAppearance
+            ?? NSAppearance(named: .darkAqua)
 
         // Persist and restore window frame across launches — only for the first
         // (primary) window of the session. Secondary multi-window/tab instances skip
@@ -225,6 +244,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     deinit {
         tabbedWindowsObservation?.invalidate()
+        pageTitleObservation?.invalidate()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -307,6 +327,151 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         config.userContentController.addUserScript(notifyScript)
         config.userContentController.add(self, name: "hermesNotify")
 
+        // The colour the chrome was painted with at this WKWebView's birth —
+        // either the cached colour (loaded by AppDelegate.loadCachedTheme on
+        // launch) or the safe-dark fallback for first-ever launches. Used by
+        // the theme bridge below to suppress sample reports that match it,
+        // and by underPageBackgroundColor + darkModeScript further down so
+        // every layer of the WebView paints this colour pre-page-load.
+        let prePaintColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        let prePaintHex = Self.hexString(for: prePaintColor)
+
+        // Theme bridge: report the page's effective background color to Swift so
+        // window.appearance can follow the web UI's actual theme (light / dark /
+        // system). The page's background changes when the user toggles theme or
+        // when the OS appearance changes (for system-tracking themes); this
+        // reports on initial paint, on classList/style mutations of <html>/<body>,
+        // on window focus, and on prefers-color-scheme media changes.
+        let themeBridgeScript = WKUserScript(
+            source: """
+                (function() {
+                    // The colour the chrome was painted with at WKWebView init —
+                    // either the cached colour or the safe-dark fallback. We
+                    // suppress any sample that matches this so transient page-
+                    // mount colours never flip the chrome unnecessarily.
+                    const cachedHex = '\(prePaintHex)'.toUpperCase();
+                    let lastReportedHex = null;
+                    const isOpaque = (c) =>
+                        c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)';
+                    function rgbStringToHex(s) {
+                        const m = s.match(/^rgba?\\((\\d+)\\D+(\\d+)\\D+(\\d+)/);
+                        if (!m) return s.toUpperCase();
+                        return '#' + [m[1], m[2], m[3]].map(function(n) {
+                            return parseInt(n, 10).toString(16)
+                                .padStart(2, '0').toUpperCase();
+                        }).join('');
+                    }
+                    // Walk the stack of elements at a viewport pixel and return the
+                    // first opaque background. Robust against web apps where <html>
+                    // and <body> are transparent and the actual paint comes from a
+                    // child shell (#app, <main>, etc).
+                    function effectiveBackgroundAt(x, y) {
+                        if (!document.elementsFromPoint) return null;
+                        const els = document.elementsFromPoint(x, y);
+                        for (const el of els) {
+                            const bg = getComputedStyle(el).backgroundColor;
+                            if (isOpaque(bg)) return bg;
+                        }
+                        return null;
+                    }
+                    function effectiveBackground() {
+                        const w = window.innerWidth || 1280;
+                        const h = window.innerHeight || 800;
+                        // Sample a few interior points so a single oddly-coloured
+                        // element under the cursor can't dominate the answer.
+                        const points = [[w >> 1, h >> 1], [w >> 1, h >> 2], [w >> 2, h >> 1]];
+                        for (const [x, y] of points) {
+                            const bg = effectiveBackgroundAt(x, y);
+                            if (bg) return bg;
+                        }
+                        // Fallbacks for when the document hasn't laid out yet.
+                        const bodyBg = document.body ? getComputedStyle(document.body).backgroundColor : null;
+                        if (isOpaque(bodyBg)) return bodyBg;
+                        return getComputedStyle(document.documentElement).backgroundColor;
+                    }
+                    // Two-layer suppression to prevent transient mount flickers
+                    // (chrome was already cream from cache → page briefly paints
+                    // dark during React mount → page settles back to cream).
+                    //
+                    //   1. Match-suppression: if the sample matches the colour
+                    //      the chrome currently shows (cachedHex initially, then
+                    //      lastReportedHex after the bridge has fired), do
+                    //      nothing — the chrome is already correct, no IPC, no
+                    //      flicker. Any pending transient is also cleared so a
+                    //      mid-flight dark sample never gets sent if the page
+                    //      settles back to the chrome colour.
+                    //
+                    //   2. Stability gate: when the sample DOES differ from the
+                    //      chrome's current colour, queue it and only fire if
+                    //      it stays unchanged for STABILITY_MS. Real theme
+                    //      changes propagate after the short delay; transients
+                    //      are dropped before the timer fires.
+                    const STABILITY_MS = 2500;
+                    let pendingColor = null;
+                    let pendingHex = null;
+                    let pendingTimer = null;
+                    function report() {
+                        const bg = effectiveBackground();
+                        if (!bg) return;
+                        const hex = rgbStringToHex(bg);
+                        const currentChromeHex = lastReportedHex || cachedHex;
+                        if (hex === currentChromeHex) {
+                            // Chrome already shows this — drop any pending
+                            // transient so the timer doesn't fire later with
+                            // a stale "different" colour.
+                            pendingColor = null;
+                            pendingHex = null;
+                            clearTimeout(pendingTimer);
+                            return;
+                        }
+                        if (hex === pendingHex) return;
+                        pendingColor = bg;
+                        pendingHex = hex;
+                        clearTimeout(pendingTimer);
+                        pendingTimer = setTimeout(function() {
+                            if (pendingHex === hex) {
+                                lastReportedHex = hex;
+                                window.webkit.messageHandlers.hermesTheme.postMessage(bg);
+                            }
+                        }, STABILITY_MS);
+                    }
+                    const observer = new MutationObserver(() => requestAnimationFrame(report));
+                    function start() {
+                        report();
+                        observer.observe(document.documentElement, {
+                            attributes: true,
+                            attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
+                        });
+                        if (document.body) {
+                            observer.observe(document.body, {
+                                attributes: true,
+                                attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
+                            });
+                        }
+                        // Belt-and-suspenders: poll every 2s. Web apps that toggle
+                        // theme via CSS-custom-property updates won't trigger our
+                        // attribute-watcher, but the resulting backgroundColor change
+                        // will be visible to elementsFromPoint on the next sample.
+                        setInterval(report, 2000);
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', start);
+                    } else {
+                        start();
+                    }
+                    window.addEventListener('focus', report);
+                    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+                    if (mq.addEventListener) mq.addEventListener('change', report);
+                    else if (mq.addListener) mq.addListener(report);
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(themeBridgeScript)
+        config.userContentController.add(self, name: "hermesTheme")
+
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
         webView = HermesWebView(frame: webFrame, configuration: config)
@@ -315,26 +480,27 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.navigationDelegate = self
         webView.allowsMagnification = true
 
-        // Fix #23: prevent white flash on startup in dark mode (FOUC).
-        // Set the WKWebView background to match the system window background
-        // before the first paint — otherwise the WebView renders white while
-        // the dark theme is still loading from the server.
-        if #available(macOS 12.0, *) {
-            // Fix #52: match the pre-paint dark background so the overscroll gutter
-            // is dark too — not white, regardless of system colour scheme.
-            webView.underPageBackgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        // Mirror document.title into window.title so the AppKit tab shows
+        // the active conversation name (truncated). KVO fires on every page
+        // title change including SPA navigations.
+        pageTitleObservation = webView.observe(\.title, options: [.new]) {
+            [weak self] _, _ in
+            DispatchQueue.main.async { self?.refreshTabTitle() }
         }
-        // Fix #52: inject a documentStart script that always sets the document
-        // background to match our pre-paint NSWindow dark background (#1a1a1a),
-        // regardless of colour scheme. This eliminates any FOUC during the HTTP
-        // round-trip — even if the window becomes visible early, both the native
-        // frame and the WebView show the same dark colour.
-        // Once the app's actual CSS loads, it overrides this with the correct theme.
+
+        // Fix #23 / #52: prevent white-or-wrong-colour flash on startup. The
+        // overscroll gutter and the body/html pre-paint background both need
+        // to match what the page will eventually render — using the cached
+        // colour avoids the dark flash that the old hardcoded #1a1a1a caused
+        // on light themes during reload / new tab.
+        if #available(macOS 12.0, *) {
+            webView.underPageBackgroundColor = prePaintColor
+        }
         let darkModeScript = WKUserScript(
             source: """
                 (function() {
-                    document.documentElement.style.background = '#1a1a1a';
-                    if (document.body) { document.body.style.background = '#1a1a1a'; }
+                    document.documentElement.style.background = '\(prePaintHex)';
+                    if (document.body) { document.body.style.background = '\(prePaintHex)'; }
                 })();
                 """,
             injectionTime: .atDocumentStart,
@@ -368,6 +534,25 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         config.userContentController.addUserScript(hideIconScript)
 
+        // Hide the web app's `.app-titlebar` whenever AppKit is rendering its native
+        // tab bar — the AppKit tab bar already shows the conversation name (mirrored
+        // from `webView.title` via KVO), so the web titlebar's "Hermes" text becomes
+        // redundant. The class is toggled by updateAppTitlebarClass(tabbed:) which
+        // fires from updateWebViewLayout() and didFinish. Keeps the rule defined at
+        // documentStart so the page knows about it before any layout/paint.
+        let appTitlebarToggleScript = WKUserScript(
+            source: """
+                (function() {
+                    const s = document.createElement('style');
+                    s.textContent = 'body.hermes-mac-tabbed .app-titlebar { display: none !important; }';
+                    (document.head || document.documentElement).appendChild(s);
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(appTitlebarToggleScript)
+
         contentView.addSubview(webView)
 
         // Fix #64: install a thin transparent drag overlay over the title-bar zone.
@@ -387,18 +572,33 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
-            statusBar = NSView(
+            // Plain NSView with an explicit colour — we want the SSH footer to
+            // match the page background EXACTLY, sharing the same RGB as the
+            // tab-bar strip (which shows window.backgroundColor through). An
+            // NSVisualEffectView would introduce vibrancy that tints the colour
+            // off, breaking the visual seam. The bar stays in sync via
+            // AppDelegate.updateAppearance → applyChromeBackgroundColor.
+            let bar = NSView(
                 frame: NSRect(x: 0, y: 0, width: bounds.width, height: statusBarHeight))
-            statusBar.autoresizingMask = [.width]
-            statusBar.wantsLayer = true
-            statusBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            bar.autoresizingMask = [.width]
+            bar.wantsLayer = true
+            let initialBg = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+                ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+            bar.layer?.backgroundColor = initialBg.cgColor
+            statusBar = bar
             contentView.addSubview(statusBar)
 
             separator = NSView(
                 frame: NSRect(x: 0, y: statusBarHeight - 1, width: bounds.width, height: 1))
             separator.autoresizingMask = [.width]
             separator.wantsLayer = true
-            separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            // Resolve separatorColor in the window's appearance context so we
+            // get the right shade (the bridge can flip appearance later — see
+            // updateAppearance — but a 1-px line is forgiving enough that we
+            // don't bother re-resolving on every flip).
+            window?.effectiveAppearance.performAsCurrentDrawingAppearance {
+                separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            }
             contentView.addSubview(separator)
 
             statusDot = NSView(frame: NSRect(x: 12, y: 9, width: 10, height: 10))
@@ -557,19 +757,50 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     }
 
     private func updateWindowTitle(healthy: Bool) {
-        let hostDisplay: String
-        if let url = URL(string: urlString), let host = url.host {
-            let port = url.port.map { ":\($0)" } ?? ""
-            hostDisplay = "\(host)\(port)"
-        } else {
-            hostDisplay = urlString
-        }
-        let dot = healthy ? "●" : "○"
-        window?.title = "\(appTitle)  \(dot) \(hostDisplay)"
-        // Update Dock badge. The cast is safe — AppDelegate is always the app delegate
-        // in this single-delegate architecture. A ConnectionStatusObserver protocol
-        // would decouple this but adds boilerplate not warranted for a utility method.
+        // Update Dock badge first so it stays accurate even when the tab title
+        // is fed from document.title (which doesn't carry health info).
         (NSApp.delegate as? AppDelegate)?.setOfflineBadge(!healthy)
+        refreshTabTitle()
+    }
+
+    /// Compute and apply the tab/window title. Prefers `webView.title` (i.e.
+    /// the active hermes-webui conversation's name) when available, truncated
+    /// to fit a reasonable tab width. Falls back to "Hermes Agent  ● host" in
+    /// direct mode (so health stays visible) or just "Hermes Agent" in SSH
+    /// mode (the SSH status bar already surfaces host info).
+    private func refreshTabTitle() {
+        let raw = (webView?.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip a redundant " — Hermes" / " - Hermes" / " | Hermes" suffix
+        // (optionally " Agent"). hermes-webui sets document.title to
+        // "<conversation> — Hermes"; we're already in the Hermes app, so
+        // the brand suffix is just noise on a Mac tab. Handles em-dash,
+        // hyphen, pipe, and middle-dot separators with surrounding whitespace.
+        let suffixPattern = #"\s+[—\-|·]\s+Hermes(\s+Agent)?\s*$"#
+        let pageTitle = raw.replacingOccurrences(
+            of: suffixPattern,
+            with: "",
+            options: .regularExpression
+        )
+        let display: String
+        if !pageTitle.isEmpty {
+            display = pageTitle.count > 40
+                ? String(pageTitle.prefix(38)) + "…"
+                : pageTitle
+        } else if connectionMode == "direct" {
+            let dot = isHealthy ? "●" : "○"
+            let host: String
+            if let url = URL(string: urlString), let h = url.host {
+                let port = url.port.map { ":\($0)" } ?? ""
+                host = "\(h)\(port)"
+            } else {
+                host = urlString
+            }
+            display = "\(appTitle)  \(dot) \(host)"
+        } else {
+            display = appTitle
+        }
+        window?.title = display
     }
 
     func updateStatus(_ status: TunnelStatus, host: String, port: Int) {
@@ -604,7 +835,85 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     // Cache auth status so we don't call requestAuthorization on every message.
     private var notificationAuthGranted: Bool? = nil
 
+    /// Parse a CSS colour string (`rgb(...)`, `rgba(...)`, or `#RRGGBB`/`#RGB`)
+    /// into normalised RGB components in [0, 1]. Returns nil on parse failure.
+    static func parseCSSColor(_ css: String) -> (r: Double, g: Double, b: Double)? {
+        let s = css.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") {
+            let hex = String(s.dropFirst())
+            func parseHex(_ str: Substring) -> Double? {
+                guard let v = UInt8(str, radix: 16) else { return nil }
+                return Double(v) / 255.0
+            }
+            if hex.count == 3 {
+                guard let rr = parseHex(hex.prefix(1) + hex.prefix(1)),
+                      let gg = parseHex(hex.dropFirst().prefix(1) + hex.dropFirst().prefix(1)),
+                      let bb = parseHex(hex.dropFirst(2).prefix(1) + hex.dropFirst(2).prefix(1))
+                else { return nil }
+                return (rr, gg, bb)
+            }
+            if hex.count == 6 {
+                guard let rr = parseHex(hex.prefix(2)),
+                      let gg = parseHex(hex.dropFirst(2).prefix(2)),
+                      let bb = parseHex(hex.dropFirst(4).prefix(2))
+                else { return nil }
+                return (rr, gg, bb)
+            }
+            return nil
+        }
+        if s.hasPrefix("rgb") {
+            let inside = s.drop(while: { $0 != "(" }).dropFirst().prefix(while: { $0 != ")" })
+            let parts = inside.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count >= 3,
+                  let rr = Double(parts[0]),
+                  let gg = Double(parts[1]),
+                  let bb = Double(parts[2])
+            else { return nil }
+            return (rr / 255, gg / 255, bb / 255)
+        }
+        return nil
+    }
+
+    /// Whether a CSS colour falls in the "dark" half by perceived luminance.
+    /// Returns true (dark) on parse failure so we err on the side of preserving
+    /// the dark-by-default look.
+    static func cssColorIsDark(_ css: String) -> Bool {
+        guard let rgb = parseCSSColor(css) else { return true }
+        // WCAG-ish relative luminance (linear approximation, good enough to bisect).
+        let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
+        return luminance < 0.5
+    }
+
+    /// Format an NSColor as a #RRGGBB hex string suitable for embedding in a
+    /// CSS string. Forces sRGB so the components round-trip cleanly regardless
+    /// of the colour space the receiver was constructed in.
+    static func hexString(for color: NSColor) -> String {
+        let sRGB = color.usingColorSpace(.sRGB) ?? color
+        let r = Int(round(max(0, min(1, Double(sRGB.redComponent))) * 255))
+        let g = Int(round(max(0, min(1, Double(sRGB.greenComponent))) * 255))
+        let b = Int(round(max(0, min(1, Double(sRGB.blueComponent))) * 255))
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Theme bridge: web UI reports its effective background colour.
+        // Propagate BOTH the appearance (controls AppKit chrome variants) AND
+        // the actual NSColor (used as window.backgroundColor so the tab-bar
+        // strip blends with the page instead of showing the hardcoded #1a1a1a
+        // through). Without the second piece, the tab bar zone stays dark even
+        // with .aqua appearance because window.backgroundColor was hardcoded
+        // dark in init() to prevent the white-flash-on-launch (fix #52).
+        if message.name == "hermesTheme", let css = message.body as? String {
+            guard let rgb = Self.parseCSSColor(css) else { return }
+            let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
+            let isDark = luminance < 0.5
+            let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            // sRGB so the components round-trip cleanly to UserDefaults
+            // (the calibrated-RGB constructor would shift values slightly).
+            let bgColor = NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1.0)
+            (NSApp.delegate as? AppDelegate)?.updateAppearance(appearance, backgroundColor: bgColor)
+            return
+        }
         guard message.name == "hermesNotify",
               let body = message.body as? [String: String],
               let title = body["title"],
@@ -665,6 +974,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         if saved >= 0.5 && saved <= 3.0 {
             webView.magnification = saved
         }
+
+        // Apply tabbed-mode titlebar class on first paint and SPA navigations —
+        // covers the case where the page loaded in a window already in a tab group,
+        // or where a route change re-rendered the body without firing the
+        // tabbedWindows KVO observer.
+        let tabbed = window?.tabGroup?.isTabBarVisible ?? false
+        updateAppTitlebarClass(tabbed: tabbed)
     }
 
     /// Measures the actual right edge of the zoom (green) traffic light button and
@@ -846,24 +1162,69 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// When the tab bar is absent (single-tab/standalone), we extend webView all
     /// the way to bounds.height so the v1.5.0 "web titlebar under transparent
     /// title bar" look is preserved.
-    private func updateWebViewLayout() {
+    func updateWebViewLayout() {
         guard let win = window, let contentView = win.contentView, webView != nil else { return }
-        let groupCount = win.tabbedWindows?.count ?? 1
-        let tabBarVisible = groupCount > 1
+        // Use NSWindowTabGroup.isTabBarVisible — it's true for ≥2 tabs in the group
+        // AND for the explicit Window → Show Tab Bar case with a single window (the
+        // raw tabbedWindows.count > 1 check missed the latter, leaving the AppKit
+        // bar to clip web content when a user manually requested it). macOS 10.13+,
+        // we target 12+.
+        let tabBarVisible = win.tabGroup?.isTabBarVisible ?? false
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
+        // Fix #68: when the find bar is open, reserve its 36 px at the top.
+        // Without this, recomputes triggered by windowDidResize, fullscreen
+        // transitions, or the tabbedWindows KVO observer would grow webView
+        // back over the find bar — hiding the search field while the bar
+        // remained in the view hierarchy. The find bar's own frame is anchored
+        // to contentLayoutRect.maxY - barHeight, so it follows the title-bar
+        // zone correctly across all these transitions; only webView height
+        // needs the carve-out here.
+        let findBarHeight: CGFloat = findBarVisible ? 36 : 0
         let topY: CGFloat = tabBarVisible
-            ? win.contentLayoutRect.maxY
-            : contentView.bounds.height
+            ? win.contentLayoutRect.maxY - findBarHeight
+            : contentView.bounds.height - findBarHeight
         let newHeight = max(0, topY - statusBarHeight)
         webView.frame = NSRect(
             x: 0, y: statusBarHeight,
             width: contentView.bounds.width, height: newHeight)
+        // Hide the web titlebar when the AppKit tab bar is rendering it
+        // redundantly; restore when it's gone.
+        updateAppTitlebarClass(tabbed: tabBarVisible)
+    }
+
+    /// Toggle a class on `<body>` that hides the web app's `.app-titlebar` element
+    /// when AppKit is rendering its native tab bar. The CSS rule is registered as
+    /// a documentStart user script in `buildUI`. Called from `updateWebViewLayout`
+    /// (covers tab join/leave, fullscreen, resize) and from `didFinish` (catches
+    /// initial page load and SPA navigations where the body might be re-rendered).
+    private func updateAppTitlebarClass(tabbed: Bool) {
+        guard webView != nil else { return }
+        let action = tabbed ? "add" : "remove"
+        webView.evaluateJavaScript(
+            "if (document.body) document.body.classList.\(action)('hermes-mac-tabbed');",
+            completionHandler: nil
+        )
     }
 
     func windowDidResize(_ notification: Notification) {
         // Window resize can also change contentLayoutRect (e.g. fullscreen toggle
         // mid-resize). Recompute the tab-bar-aware webView frame on every resize.
         updateWebViewLayout()
+    }
+
+    /// Apply a new chrome background colour. Called by AppDelegate.updateAppearance
+    /// when the theme bridge reports a new web-UI background — keeps the SSH
+    /// status bar in lock-step with window.backgroundColor (which the tab-bar
+    /// strip shows through), so all three surfaces share the same exact RGB.
+    func applyChromeBackgroundColor(_ color: NSColor) {
+        statusBar?.layer?.backgroundColor = color.cgColor
+        // Re-resolve the separator colour in the new appearance so its tone
+        // matches the surroundings (1-px line, but still nice to keep crisp).
+        if let sep = separator {
+            window?.effectiveAppearance.performAsCurrentDrawingAppearance {
+                sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            }
+        }
     }
 
     // MARK: - Full-screen state persistence (fix #43)

@@ -13,13 +13,24 @@ class SplashWindowController: NSWindowController {
         window.backgroundColor = .clear
         window.level = .floating
         window.center()
+        // Match the active web-UI theme tracked on AppDelegate; falls back to dark.
+        window.appearance = (NSApp.delegate as? AppDelegate)?.currentAppearance
+            ?? NSAppearance(named: .darkAqua)
         super.init(window: window)
 
-        let container = NSView(frame: window.contentView!.bounds)
+        // NSVisualEffectView automatically tracks the window's appearance and
+        // renders with the right window-background material — avoids the
+        // "white splash on light system" bug that NSColor.windowBackgroundColor
+        // .cgColor causes (cgColor resolves once against system appearance,
+        // not the per-window .darkAqua we set above).
+        let container = NSVisualEffectView(frame: window.contentView!.bounds)
         container.autoresizingMask = [.width, .height]
+        container.material = .windowBackground
+        container.state = .active
+        container.blendingMode = .behindWindow
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         container.layer?.cornerRadius = 16
+        container.layer?.masksToBounds = true
         window.contentView?.addSubview(container)
 
         let label = NSTextField(labelWithString: title)
