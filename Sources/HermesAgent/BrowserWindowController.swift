@@ -534,6 +534,25 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         config.userContentController.addUserScript(hideIconScript)
 
+        // Hide the web app's `.app-titlebar` whenever AppKit is rendering its native
+        // tab bar — the AppKit tab bar already shows the conversation name (mirrored
+        // from `webView.title` via KVO), so the web titlebar's "Hermes" text becomes
+        // redundant. The class is toggled by updateAppTitlebarClass(tabbed:) which
+        // fires from updateWebViewLayout() and didFinish. Keeps the rule defined at
+        // documentStart so the page knows about it before any layout/paint.
+        let appTitlebarToggleScript = WKUserScript(
+            source: """
+                (function() {
+                    const s = document.createElement('style');
+                    s.textContent = 'body.hermes-mac-tabbed .app-titlebar { display: none !important; }';
+                    (document.head || document.documentElement).appendChild(s);
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(appTitlebarToggleScript)
+
         contentView.addSubview(webView)
 
         // Fix #64: install a thin transparent drag overlay over the title-bar zone.
@@ -955,6 +974,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         if saved >= 0.5 && saved <= 3.0 {
             webView.magnification = saved
         }
+
+        // Apply tabbed-mode titlebar class on first paint and SPA navigations —
+        // covers the case where the page loaded in a window already in a tab group,
+        // or where a route change re-rendered the body without firing the
+        // tabbedWindows KVO observer.
+        let tabbed = window?.tab.tabGroup?.isTabBarVisible ?? false
+        updateAppTitlebarClass(tabbed: tabbed)
     }
 
     /// Measures the actual right edge of the zoom (green) traffic light button and
@@ -1138,8 +1164,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// title bar" look is preserved.
     private func updateWebViewLayout() {
         guard let win = window, let contentView = win.contentView, webView != nil else { return }
-        let groupCount = win.tabbedWindows?.count ?? 1
-        let tabBarVisible = groupCount > 1
+        // Use NSWindowTabGroup.isTabBarVisible — it's true for ≥2 tabs in the group
+        // AND for the explicit Window → Show Tab Bar case with a single window (the
+        // raw tabbedWindows.count > 1 check missed the latter, leaving the AppKit
+        // bar to clip web content when a user manually requested it). macOS 10.13+,
+        // we target 12+.
+        let tabBarVisible = win.tab.tabGroup?.isTabBarVisible ?? false
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
         // Fix #68: when the find bar is open, reserve its 36 px at the top.
         // Without this, recomputes triggered by windowDidResize, fullscreen
@@ -1157,6 +1187,23 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.frame = NSRect(
             x: 0, y: statusBarHeight,
             width: contentView.bounds.width, height: newHeight)
+        // Hide the web titlebar when the AppKit tab bar is rendering it
+        // redundantly; restore when it's gone.
+        updateAppTitlebarClass(tabbed: tabBarVisible)
+    }
+
+    /// Toggle a class on `<body>` that hides the web app's `.app-titlebar` element
+    /// when AppKit is rendering its native tab bar. The CSS rule is registered as
+    /// a documentStart user script in `buildUI`. Called from `updateWebViewLayout`
+    /// (covers tab join/leave, fullscreen, resize) and from `didFinish` (catches
+    /// initial page load and SPA navigations where the body might be re-rendered).
+    private func updateAppTitlebarClass(tabbed: Bool) {
+        guard webView != nil else { return }
+        let action = tabbed ? "add" : "remove"
+        webView.evaluateJavaScript(
+            "if (document.body) document.body.classList.\(action)('hermes-mac-tabbed');",
+            completionHandler: nil
+        )
     }
 
     func windowDidResize(_ notification: Notification) {
