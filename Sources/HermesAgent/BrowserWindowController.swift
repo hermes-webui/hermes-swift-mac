@@ -93,6 +93,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private(set) var connectionMode: String
     var onReconnect: (() -> Void)?
     var onNavigationFailed: (() -> Void)?
+    /// Fired from windowWillClose so AppDelegate can prune its browserWindows array.
+    /// Receives self so the delegate can match by identity (===) without holding a
+    /// strong reference. Crucial for tab drag-out: AppKit retains the window briefly
+    /// after it leaves a tab group, and without this callback the controller leaks.
+    var onWindowWillClose: ((BrowserWindowController) -> Void)?
     /// Guards against onNavigationFailed firing twice (both provisional and 5xx paths
     /// can trigger on the same load event during teardown).
     private var didReportNavigationFailure = false
@@ -108,6 +113,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// The UserDefaults autosave name for the main window frame.
     /// Used for both windowFrameAutosaveName and the derived "NSWindow Frame <name>" key.
     private static let windowAutosaveName = "HermesMainWindow"
+    /// Whether this window persists its frame. False for secondary multi-window/tab
+    /// instances so they cascade from the front-most window instead of stacking on
+    /// the same saved rect.
+    private let useFrameAutosave: Bool
     /// Throttle the mic-denied alert to once per app session — avoids spamming if the
     /// user hits the mic button multiple times after having denied access.
     private static var didShowMicDeniedAlert = false
@@ -120,10 +129,18 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var healthTimer: Timer?
     private var isHealthy: Bool = true
 
-    init(urlString: String, title: String, connectionMode: String = "direct") {
+    /// - Parameter useFrameAutosave: When true (default), the window persists its
+    ///   frame to UserDefaults under HermesMainWindow. Only the *first* window of a
+    ///   multi-window session should set this true; secondary windows pass false so
+    ///   they cascade from the front-most window's frame instead of all stacking on
+    ///   the same saved rect. AppKit's tab system shares the parent frame so the
+    ///   parameter has no visible effect when the user prefers tabs.
+    init(urlString: String, title: String, connectionMode: String = "direct",
+         useFrameAutosave: Bool = true) {
         self.urlString = urlString
         self.appTitle = title
         self.connectionMode = connectionMode
+        self.useFrameAutosave = useFrameAutosave
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 830),
@@ -145,16 +162,31 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
 
-        // Persist and restore window frame across launches.
+        // Persist and restore window frame across launches — only for the first
+        // (primary) window of the session. Secondary multi-window/tab instances skip
+        // autosave so they cascade in openBrowser instead of stacking on the saved rect.
         // Must be set on the NSWindowController (self), not on the raw NSWindow.
         // Setting it on the window before super.init is clobbered by the controller's
         // own empty windowFrameAutosaveName during its setup. The controller property
         // handles both save and restore atomically.
-        self.windowFrameAutosaveName = Self.windowAutosaveName
-        // First launch (no saved frame yet): center the window.
-        if UserDefaults.standard.object(forKey: "NSWindow Frame \(Self.windowAutosaveName)") == nil {
-            window.center()
+        if useFrameAutosave {
+            self.windowFrameAutosaveName = Self.windowAutosaveName
+            // First launch (no saved frame yet): center the window.
+            if UserDefaults.standard.object(forKey: "NSWindow Frame \(Self.windowAutosaveName)") == nil {
+                window.center()
+            }
         }
+        // Multi-window / native tabs (#42): tabbingMode = .preferred opts THIS window
+        // into AppKit's tab system regardless of the user's "Prefer Tabs When Opening
+        // Documents" system preference. New windows with a matching tabbingIdentifier
+        // join the current tab group automatically; the user can still pull tabs out
+        // (Move Tab to New Window) or merge them back (Merge All Windows) via the
+        // Window menu. The single tabbingIdentifier ensures every Hermes window can
+        // merge into one tab group. Use .automatic if we ever want to honour the
+        // system preference instead — current choice favours always-tabbable since
+        // multi-window users tend to want both modes available regardless of pref.
+        window.tabbingMode = .preferred
+        window.tabbingIdentifier = "ai.get-hermes.HermesAgent.main"
 
         window.onPaste = { [weak self] in
             self?.handlePaste()
@@ -751,10 +783,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     // MARK: - Window close / hide (Cmd+W hides, doesn't quit)
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Cmd+W on a Dock app should hide the window, not quit.
-        // Keep the app alive so the Dock icon stays and can reopen the window.
-        window?.orderOut(nil)
-        return false
+        // Multi-window (#42): only the LAST live browser window hides on Cmd+W —
+        // closing it for real would kill the Dock icon and force a relaunch.
+        // For non-last windows, let AppKit close normally so windowWillClose fires
+        // and AppDelegate prunes its browserWindows array (without that, closed
+        // tabs leak as phantoms in the array and menu actions misroute to a dead
+        // controller). Tab drag-out close, Cmd+W in any non-last window, and the
+        // tab close button all hit this path.
+        let appDelegate = NSApp.delegate as? AppDelegate
+        let liveCount = appDelegate?.browserWindows.count ?? 0
+        if liveCount <= 1 {
+            // Last window: hide instead of close so the app stays alive in the Dock.
+            // Cmd+N from there falls through to startTunnel() if needed.
+            window?.orderOut(nil)
+            return false
+        }
+        return true
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -777,7 +821,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     func windowDidExitFullScreen(_ notification: Notification) {
         // Don't clobber the saved preference during a programmatic reconnect close.
         guard !isIntentionalClose else { return }
-        UserDefaults.standard.set(false, forKey: "windowWasFullScreen")
+        // Multi-window (#42): only persist false when no OTHER browser window is
+        // currently fullscreen. Without this guard, exiting fullscreen on one window
+        // while others remain fullscreen would forget the preference, and on next
+        // launch no window would restore to fullscreen even though one had been.
+        let appDelegate = NSApp.delegate as? AppDelegate
+        let othersFullScreen = appDelegate?.browserWindows.contains { other in
+            other !== self && (other.window?.styleMask.contains(.fullScreen) ?? false)
+        } ?? false
+        if !othersFullScreen {
+            UserDefaults.standard.set(false, forKey: "windowWasFullScreen")
+        }
         // Fix #57: restore traffic light clearance after exiting fullscreen.
         injectTrafficLightWidthVar()
     }
@@ -808,6 +862,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     func windowWillClose(_ notification: Notification) {
         stopHealthCheck()
         hideFindBar()
+        // Notify AppDelegate so it can prune its browserWindows array. We pass self
+        // so the delegate can match by identity. This fires for: user-initiated close
+        // (Cmd+W on a window that's not the last), tab drag-out close, programmatic
+        // close from AppDelegate (via isIntentionalClose=true in startTunnel), and
+        // app termination. AppDelegate handles all four uniformly — array removal
+        // is idempotent.
+        onWindowWillClose?(self)
     }
 
     // MARK: - Find in page (fix #37/#45, Cmd+F)

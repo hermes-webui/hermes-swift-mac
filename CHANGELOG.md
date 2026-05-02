@@ -1,5 +1,12 @@
 # Changelog
 
+## [v1.6.0] — 2026-05-02
+
+### Added
+- **Multi-window and native tabs (#42)** — open multiple independent Hermes sessions from the same app. `Cmd+N` opens a new window; `Cmd+T` does the same and lands as a tab when the user's "Prefer Tabs" system preference is set to Always (or In Full Screen). Each window owns its own `WKWebView` so server-side sessions stay independent — chat history, scroll position, in-flight streams, cookies, and localStorage are preserved per window. AppKit's native tabbing system fills in `Show Tab Bar`, `Show All Tabs`, `Move Tab to New Window`, and `Merge All Windows` automatically in the Window menu, plus the tab-bar plus button (wired through `newWindowForTab`). The frontmost browser window receives all menu actions (Find, Zoom, Reload); the global hotkey (default `Cmd+Shift+H`) and Dock-icon click both surface the most-recently-active window. Reconnect logic (SSH tunnel restore, network recovery via `NWPathMonitor`, manual retry) fans out across every open window — every WKWebView reloads in place, no session loss. Window frame autosave applies only to the first window of a session; subsequent windows cascade from the front-most window's frame so they're visibly stacked. Closes #42.
+
+  Engineering notes: Opus pre-commit advisor caught four real correctness bugs before this shipped — (1) `onNavigationFailed` retain cycle leaking the BrowserWindowController + WKWebView for every nav failure, (2) `windowShouldClose` returning `false` unconditionally caused closed tabs to phantom in `browserWindows` because `windowWillClose` doesn't fire on `orderOut`, (3) `windowDidExitFullScreen` clobbered `windowWasFullScreen` even when other windows remained fullscreen, (4) `alphaValue=0` fade-in created a visible flash on tabs joining an existing tab group. All four fixed inline before push.
+
 ## [v1.5.4] — 2026-05-02
 
 ### Fixed
