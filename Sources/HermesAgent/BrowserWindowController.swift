@@ -931,8 +931,6 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    // MARK: - Download (WKDownloadDelegate wiring)
-
     // MARK: - Microphone / camera permissions
 
     func webView(
