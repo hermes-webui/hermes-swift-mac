@@ -16,7 +16,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     var tunnelManager: TunnelManager!
     var splashWindow: SplashWindowController!
-    var browserWindow: BrowserWindowController?
+    /// Tracks the next cascade origin for non-first windows. Set by
+    /// `cascadeTopLeft(from:)` in openBrowser so rapid Cmd+N produces a clean diagonal
+    /// stack rather than every new window cascading from the same key-window position.
+    /// Reset to nil whenever the array empties (no live windows → next opening is "first").
+    private var nextCascadePoint: NSPoint?
+    /// Active browser windows. Multiple windows enable concurrent sessions;
+    /// AppKit's window-tabbing system groups them when the user prefers tabs.
+    /// Order: most-recently-opened last. The "key" window for menu actions is
+    /// derived from NSApp.keyWindow when present, falling back to the array tail.
+    var browserWindows: [BrowserWindowController] = []
+    /// The browser window targeted by menu actions (Find, Zoom, Reload, etc).
+    /// Returns the front-most browser window if focused, otherwise the most
+    /// recently opened one. Returns nil only when no browser window is open
+    /// (e.g. error state).
+    var keyBrowserWindow: BrowserWindowController? {
+        if let w = NSApp.keyWindow?.windowController as? BrowserWindowController {
+            return w
+        }
+        if let w = NSApp.mainWindow?.windowController as? BrowserWindowController {
+            return w
+        }
+        return browserWindows.last
+    }
     var errorWindow: ErrorWindowController?
     var preferencesWindow: PreferencesWindowController?
     var updaterController: SPUStandardUpdaterController!
@@ -82,17 +104,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splashSubtitle = connectionMode == "ssh" ? "Establishing SSH tunnel…" : "Connecting…"
         splashWindow = SplashWindowController(title: appTitle, subtitle: splashSubtitle)
         splashWindow.showWindow(nil)
-        // Fix #10: if the browser window is alive AND the connection mode hasn't changed,
-        // hide it (orderOut) and reuse the WKWebView to preserve session state.
-        // A mode switch (direct↔ssh) must rebuild the window to get the correct status bar.
-        let reuseWindow = browserWindow != nil &&
-            browserWindow?.connectionMode == connectionMode
-        if reuseWindow {
-            browserWindow?.window?.orderOut(nil)
+        // Fix #10 (multi-window): reuse all browser windows in place when the connection
+        // mode hasn't changed — preserves WKWebView state (cookies, scroll, in-flight chat)
+        // for every open session. A mode switch (direct↔ssh) must rebuild every window so
+        // the status-bar UI matches the new mode. We snapshot the array because openBrowser
+        // and showErrorWindow can mutate browserWindows during the reconnect flow.
+        let reuseWindows = !browserWindows.isEmpty &&
+            browserWindows.allSatisfy { $0.connectionMode == connectionMode }
+        if reuseWindows {
+            browserWindows.forEach { $0.window?.orderOut(nil) }
         } else {
-            browserWindow?.isIntentionalClose = true
-            browserWindow?.close()
-            browserWindow = nil
+            browserWindows.forEach { win in
+                win.isIntentionalClose = true
+                win.close()
+            }
+            browserWindows.removeAll()
+            nextCascadePoint = nil
         }
         errorWindow?.close()
         errorWindow = nil
@@ -118,17 +145,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             tunnelManager.onStatusChange = { [weak self] status in
                 guard let self = self else { return }
-                self.browserWindow?.updateStatus(status, host: host, port: localPort)
+                self.browserWindows.forEach { $0.updateStatus(status, host: host, port: localPort) }
             }
 
             tunnelManager.start {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.splashWindow.close()
                     if self.tunnelManager.status == .connected {
-                        if reuseWindow, let existing = self.browserWindow {
-                            // Fix #10: reuse existing WKWebView for session continuity.
-                            existing.reconnectInPlace(targetURL: targetURL)
-                            existing.window?.makeKeyAndOrderFront(nil)
+                        if reuseWindows && !self.browserWindows.isEmpty {
+                            // Fix #10: reuse every existing WKWebView for session continuity.
+                            for win in self.browserWindows {
+                                win.reconnectInPlace(targetURL: targetURL)
+                            }
+                            self.browserWindows.last?.window?.makeKeyAndOrderFront(nil)
                             self.setOfflineBadge(false)
                         } else {
                             self.openBrowser(
@@ -139,7 +168,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             )
                         }
                     } else {
-                        self.browserWindow = nil  // abandon the hidden window
+                        // Reconnect failed: drop the hidden windows so showErrorWindow's
+                        // close-all sweep operates on a clean array.
+                        self.browserWindows.removeAll()
                         self.showErrorWindow(targetURL: targetURL, mode: "ssh")
                     }
                 }
@@ -149,10 +180,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self.splashWindow.close()
                     if reachable {
-                        if reuseWindow, let existing = self.browserWindow {
-                            // Fix #10: reuse existing WKWebView for session continuity.
-                            existing.reconnectInPlace(targetURL: targetURL)
-                            existing.window?.makeKeyAndOrderFront(nil)
+                        if reuseWindows && !self.browserWindows.isEmpty {
+                            // Fix #10: reuse every existing WKWebView for session continuity.
+                            for win in self.browserWindows {
+                                win.reconnectInPlace(targetURL: targetURL)
+                            }
+                            self.browserWindows.last?.window?.makeKeyAndOrderFront(nil)
                             self.setOfflineBadge(false)
                         } else {
                             self.openBrowser(
@@ -163,7 +196,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             )
                         }
                     } else {
-                        self.browserWindow = nil  // abandon the hidden window
+                        self.browserWindows.removeAll()
                         self.showErrorWindow(targetURL: targetURL, mode: "direct")
                     }
                 }
@@ -171,34 +204,99 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Opens a new browser window. The first window in a session uses the persisted
+    /// frame autosave (HermesMainWindow); subsequent windows cascade from the front-most
+    /// window's frame so the user can see they stacked. With `tabbingMode = .preferred`,
+    /// AppKit groups windows into native tabs when the user's "Prefer Tabs" system
+    /// preference is on.
+    @discardableResult
     private func openBrowser(
-        targetURL: String, mode: String, sshHost: String?, localPort: Int?
-    ) {
+        targetURL: String, mode: String, sshHost: String?, localPort: Int?,
+        asTab: Bool = false
+    ) -> BrowserWindowController {
+        let isFirstWindow = browserWindows.isEmpty
         let browser = BrowserWindowController(
             urlString: targetURL,
             title: appTitle,
-            connectionMode: mode
+            connectionMode: mode,
+            useFrameAutosave: isFirstWindow
         )
+        // Cmd+N (asTab=false, non-first): force a separate window even though the
+        // window's tabbingMode is .preferred. Setting .disallowed at show-time
+        // bypasses the auto-tab decision; we restore .preferred immediately after
+        // so the user can later use Window → Merge All Windows. The first window
+        // has no existing tab group to join, so this guard is a no-op for it.
+        if !asTab && !isFirstWindow {
+            browser.window?.tabbingMode = .disallowed
+        }
         browser.onReconnect = { [weak self] in
             self?.startTunnel()
         }
-        browser.onNavigationFailed = { [weak self] in
-            self?.browserWindow?.close()
-            self?.browserWindow = nil
-            self?.showErrorWindow(targetURL: targetURL, mode: mode)
+        browser.onNavigationFailed = { [weak self, weak browser] in
+            // Multi-window: a single window's nav failure shouldn't tear down the others.
+            // Drop just the failing window from the array. If it was the last one, escalate
+            // to the error screen so the user sees a clear "can't reach the server" state.
+            // Both `self` and `browser` are weak — the closure is stored on the controller
+            // it would otherwise capture, which would create a controller→closure→controller
+            // retain cycle leaking the WKWebView for the lifetime of the app.
+            guard let self = self, let browser = browser else { return }
+            self.browserWindows.removeAll { $0 === browser }
+            browser.isIntentionalClose = true
+            browser.close()
+            if self.browserWindows.isEmpty {
+                self.showErrorWindow(targetURL: targetURL, mode: mode)
+            }
+        }
+        // Notify on close so we can prune browserWindows. Crucial: without this, dragging
+        // a tab out, closing it, then opening a new tab would leak the closed controller
+        // and AppKit would still send menu validations to a dead WKWebView.
+        browser.onWindowWillClose = { [weak self] closing in
+            self?.browserWindows.removeAll { $0 === closing }
         }
         if mode == "ssh", let host = sshHost, let port = localPort {
             browser.updateStatus(tunnelManager.status, host: host, port: port)
         }
-        // Fix #52: set alphaValue=0 BEFORE showWindow — prevents a brief
-        // visible-at-full-opacity tick. The window fades in on first WKWebView paint.
-        // backgroundColor is already set to #1a1a1a in BrowserWindowController.init.
-        browser.window?.alphaValue = 0
-        browser.showWindow(nil)
-        browserWindow = browser
 
-        // Restore full-screen state (fix #43)
-        if UserDefaults.standard.bool(forKey: "windowWasFullScreen") {
+        // Cascade non-first windows from the front-most window so each new window/tab
+        // is visibly stacked. AppKit's tabbing layer ignores this for tabs (they share
+        // the parent frame) but it's the right default for separate-window users.
+        // Persist the next cascade point across calls so rapid Cmd+N produces a clean
+        // diagonal stack rather than every new window cascading from the same anchor.
+        if !isFirstWindow,
+           let win = browser.window,
+           let anchor = (NSApp.keyWindow ?? browserWindows.last?.window) {
+            win.setFrame(anchor.frame, display: false)
+            let from = nextCascadePoint
+                ?? NSPoint(x: anchor.frame.minX, y: anchor.frame.maxY)
+            nextCascadePoint = win.cascadeTopLeft(from: from)
+        }
+
+        // Fix #52: set alphaValue=0 BEFORE showWindow on the very first window only
+        // — prevents the brief visible-at-full-opacity tick on app launch. For
+        // subsequent windows/tabs (#42), starting at alpha 0 would hide the content
+        // area while AppKit's tab bar already shows the new tab as active, which
+        // reads as a flash to the user. Non-first windows fade implicitly via the
+        // normal cascade — no fade-in animation needed.
+        if isFirstWindow {
+            browser.window?.alphaValue = 0
+        }
+        browser.showWindow(nil)
+        browserWindows.append(browser)
+
+        // Cmd+N path: restore .preferred after showing standalone so the user can
+        // later merge this window into the tab group via Window → Merge All Windows.
+        // tabbingMode is consulted at show-time for the auto-tab decision; setting
+        // it back to .preferred after show doesn't pull this window into a tab group.
+        if !asTab && !isFirstWindow {
+            DispatchQueue.main.async {
+                browser.window?.tabbingMode = .preferred
+            }
+        }
+
+        // Restore full-screen state (fix #43) — only on the very first window of the
+        // session. Subsequent windows opened by Cmd+N inherit the system default; the
+        // user can full-screen them individually.
+        if isFirstWindow && UserDefaults.standard.bool(forKey: "windowWasFullScreen") {
             DispatchQueue.main.async {
                 if browser.window?.styleMask.contains(.fullScreen) == false {
                     browser.window?.toggleFullScreen(nil)
@@ -208,12 +306,64 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Clear offline badge when connected (fix #39)
         setOfflineBadge(false)
+        return browser
+    }
+
+    /// Cmd+N — open a new separate window. Always opens standalone, even if other
+    /// browser windows are already grouped into native tabs. The user can later
+    /// merge it into the existing tab group via Window → Merge All Windows.
+    @objc func newBrowserWindow() {
+        openNewBrowserSession(asTab: false)
+    }
+
+    /// Cmd+T — open a new tab in the front-most browser window's tab group.
+    /// AppKit's tabbing system (windows share `tabbingIdentifier` + .preferred mode)
+    /// auto-joins the new window into the existing group.
+    @objc func newBrowserTab() {
+        openNewBrowserSession(asTab: true)
+    }
+
+    /// AppKit's tab-bar "+" button forwards through the responder chain looking
+    /// for `newWindowForTab(_:)`. Implementing it on AppDelegate (which is in the
+    /// chain via NSApp) wires the plus button to the new-tab flow specifically —
+    /// the "+" button is conceptually the same as Cmd+T, not Cmd+N.
+    @objc func newWindowForTab(_ sender: Any?) {
+        newBrowserTab()
+    }
+
+    /// Shared entry point for new-window and new-tab actions. Refuses to open
+    /// when there's no live connection (avoids instant-fail windows). When
+    /// asTab=false, openBrowser sets .disallowed at show-time so the new window
+    /// stays standalone instead of auto-joining the existing tab group.
+    private func openNewBrowserSession(asTab: Bool) {
+        let defaults = UserDefaults.standard
+        let mode = defaults.string(forKey: "connectionMode") ?? "direct"
+        let targetURL = defaults.string(forKey: "targetURL") ?? defaultTargetURL
+        if mode == "ssh" && tunnelManager?.status != .connected { return }
+        if mode == "direct" && browserWindows.isEmpty {
+            // No live first window in direct mode either — let startTunnel handle it.
+            startTunnel()
+            return
+        }
+        let host = mode == "ssh" ? defaults.string(forKey: "sshHost") : nil
+        let port = mode == "ssh"
+            ? Int(defaults.string(forKey: "localPort") ?? defaultLocalPort)
+            : nil
+        openBrowser(
+            targetURL: targetURL, mode: mode, sshHost: host, localPort: port, asTab: asTab)
     }
 
     private func showErrorWindow(targetURL: String, mode: String) {
-        browserWindow?.isIntentionalClose = true
-        browserWindow?.close()
-        browserWindow = nil
+        // Error state is global — close every browser window. The user reconnects
+        // via the error window's Retry button, which calls startTunnel() and reopens
+        // a single browser window. Multi-window state is intentionally not restored:
+        // the connection failure could be persistent and we don't want N error windows.
+        for win in browserWindows {
+            win.isIntentionalClose = true
+            win.close()
+        }
+        browserWindows.removeAll()
+        nextCascadePoint = nil
         let err = ErrorWindowController(
             appTitle: appTitle,
             targetURL: targetURL,
@@ -311,6 +461,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupMenu() {
         let menuBar = NSMenu()
 
+        // File menu — Cmd+N "New Window" is the multi-window entry point. AppKit's
+        // tab system also responds to this when "Prefer Tabs" is on, opening a new tab
+        // in the current group instead.
         let appMenuItem = NSMenuItem()
         menuBar.addItem(appMenuItem)
         let appMenu = NSMenu()
@@ -330,6 +483,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(
             withTitle: "Quit \(appTitle)", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
+
+        // File menu — multi-window entry points (Cmd+N new window, Cmd+T new tab).
+        // AppKit auto-injects the "Show Tab Bar" / "Show All Tabs" / "Move Tab to New
+        // Window" / "Merge All Windows" items into the Window menu when tabbingMode is
+        // set on a window — we don't need to add those manually.
+        let fileMenuItem = NSMenuItem()
+        menuBar.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenuItem.submenu = fileMenu
+        fileMenu.addItem(
+            withTitle: "New Window", action: #selector(newBrowserWindow), keyEquivalent: "n")
+        let newTabItem = NSMenuItem(
+            title: "New Tab", action: #selector(newBrowserTab), keyEquivalent: "t")
+        fileMenu.addItem(newTabItem)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
+            withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w")
 
         let editMenuItem = NSMenuItem()
         menuBar.addItem(editMenuItem)
@@ -370,6 +541,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(
             withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
+        // Designating windowMenu as NSApp.windowsMenu makes AppKit auto-populate
+        // it with the list of open browser windows AND auto-inject "Show Tab Bar",
+        // "Show All Tabs", "Move Tab to New Window", and "Merge All Windows" items
+        // for windows whose tabbingMode is .preferred. Must be set before any
+        // browser window opens so AppKit observes window-add events from the start.
+        NSApp.windowsMenu = windowMenu
 
         let viewMenuItem = NSMenuItem()
         menuBar.addItem(viewMenuItem)
@@ -398,30 +575,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Show window (mirrors global hotkey Cmd+Shift+H, fix #35)
 
     @objc func showMainWindow() {
-        browserWindow?.showWindow(nil)
-        browserWindow?.window?.makeKeyAndOrderFront(nil)
+        // Bring the front-most browser window to focus; if no browser window
+        // exists (rare — e.g. mid-reconnect), open one.
+        if let win = keyBrowserWindow {
+            win.showWindow(nil)
+            win.window?.makeKeyAndOrderFront(nil)
+        } else if !browserWindows.isEmpty {
+            browserWindows.last?.showWindow(nil)
+            browserWindows.last?.window?.makeKeyAndOrderFront(nil)
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Page reload (fix — Cmd+R)
 
     @objc func reloadPage() {
-        browserWindow?.webViewForZoom?.reload()
+        keyBrowserWindow?.webViewForZoom?.reload()
     }
 
     // MARK: - Find forwarding (fix #37/#45 — menu items delegate to BrowserWindowController)
 
     @objc func openFind() {
-        // Toggle the find bar — if already open, Cmd+F closes it (standard macOS behaviour)
-        (browserWindow?.window as? BrowserWindow)?.onFind?()
+        // Toggle the find bar in the front-most browser window — if already open,
+        // Cmd+F closes it (standard macOS behaviour).
+        (keyBrowserWindow?.window as? BrowserWindow)?.onFind?()
     }
 
     @objc func findNext() {
-        (browserWindow?.window as? BrowserWindow)?.onFindNext?()
+        (keyBrowserWindow?.window as? BrowserWindow)?.onFindNext?()
     }
 
     @objc func findPrev() {
-        (browserWindow?.window as? BrowserWindow)?.onFindPrev?()
+        (keyBrowserWindow?.window as? BrowserWindow)?.onFindPrev?()
     }
 
     // MARK: - Open in system browser (bonus feature)
@@ -438,19 +623,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static let zoomKey = "webViewMagnification"
 
     @objc func zoomIn() {
-        guard let webView = browserWindow?.webViewForZoom else { return }
+        guard let webView = keyBrowserWindow?.webViewForZoom else { return }
         webView.magnification = min(webView.magnification + 0.1, 3.0)
         UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
     }
 
     @objc func zoomOut() {
-        guard let webView = browserWindow?.webViewForZoom else { return }
+        guard let webView = keyBrowserWindow?.webViewForZoom else { return }
         webView.magnification = max(webView.magnification - 0.1, 0.5)
         UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
     }
 
     @objc func zoomReset() {
-        browserWindow?.webViewForZoom?.magnification = 1.0
+        keyBrowserWindow?.webViewForZoom?.magnification = 1.0
         UserDefaults.standard.set(1.0, forKey: Self.zoomKey)
     }
 
@@ -497,8 +682,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let ptr = userData else { return noErr }
                     let delegate = Unmanaged<AppDelegate>.fromOpaque(ptr).takeUnretainedValue()
                     DispatchQueue.main.async {
-                        delegate.browserWindow?.showWindow(nil)
-                        delegate.browserWindow?.window?.makeKeyAndOrderFront(nil)
+                        // Focus the front-most browser window; do nothing if none
+                        // exist (user is on splash/error and the global hotkey is
+                        // a poor moment to spawn a window the user can't yet use).
+                        if let win = delegate.keyBrowserWindow {
+                            win.showWindow(nil)
+                            win.window?.makeKeyAndOrderFront(nil)
+                        }
                         NSApp.activate(ignoringOtherApps: true)
                     }
                     return noErr
@@ -560,9 +750,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Clicking the Dock icon when the window is hidden brings it back.
-        if !flag {
-            browserWindow?.window?.makeKeyAndOrderFront(nil)
+        // Clicking the Dock icon when all windows are hidden brings the front-most
+        // one back. With multi-window, we surface the most-recently-active one;
+        // the user can then expose others via the Window menu or tab bar.
+        if !flag, let win = (keyBrowserWindow ?? browserWindows.last) {
+            win.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
         return true
