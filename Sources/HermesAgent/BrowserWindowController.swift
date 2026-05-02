@@ -325,13 +325,38 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             source: """
                 (function() {
                     let lastReported = null;
+                    const isOpaque = (c) =>
+                        c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)';
+                    // Walk the stack of elements at a viewport pixel and return the
+                    // first opaque background. Robust against web apps where <html>
+                    // and <body> are transparent and the actual paint comes from a
+                    // child shell (#app, <main>, etc).
+                    function effectiveBackgroundAt(x, y) {
+                        if (!document.elementsFromPoint) return null;
+                        const els = document.elementsFromPoint(x, y);
+                        for (const el of els) {
+                            const bg = getComputedStyle(el).backgroundColor;
+                            if (isOpaque(bg)) return bg;
+                        }
+                        return null;
+                    }
+                    function effectiveBackground() {
+                        const w = window.innerWidth || 1280;
+                        const h = window.innerHeight || 800;
+                        // Sample a few interior points so a single oddly-coloured
+                        // element under the cursor can't dominate the answer.
+                        const points = [[w >> 1, h >> 1], [w >> 1, h >> 2], [w >> 2, h >> 1]];
+                        for (const [x, y] of points) {
+                            const bg = effectiveBackgroundAt(x, y);
+                            if (bg) return bg;
+                        }
+                        // Fallbacks for when the document hasn't laid out yet.
+                        const bodyBg = document.body ? getComputedStyle(document.body).backgroundColor : null;
+                        if (isOpaque(bodyBg)) return bodyBg;
+                        return getComputedStyle(document.documentElement).backgroundColor;
+                    }
                     function report() {
-                        const html = document.documentElement;
-                        const body = document.body;
-                        const bodyBg = body ? getComputedStyle(body).backgroundColor : null;
-                        const htmlBg = getComputedStyle(html).backgroundColor;
-                        const isTransparent = (c) => !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)';
-                        const bg = !isTransparent(bodyBg) ? bodyBg : htmlBg;
+                        const bg = effectiveBackground();
                         if (bg && bg !== lastReported) {
                             lastReported = bg;
                             window.webkit.messageHandlers.hermesTheme.postMessage(bg);
@@ -350,6 +375,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                                 attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
                             });
                         }
+                        // Belt-and-suspenders: poll every 2s. Web apps that toggle
+                        // theme via CSS-custom-property updates won't trigger our
+                        // attribute-watcher, but the resulting backgroundColor change
+                        // will be visible to elementsFromPoint on the next sample.
+                        setInterval(report, 2000);
                     }
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', start);
