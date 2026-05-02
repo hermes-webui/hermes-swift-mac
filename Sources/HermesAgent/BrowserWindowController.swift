@@ -448,18 +448,32 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
-            statusBar = NSView(
+            // NSVisualEffectView tracks effective appearance automatically, so
+            // the status bar background stays in sync when the theme bridge
+            // flips the window between .aqua and .darkAqua. Plain NSView with
+            // a baked .cgColor would render with the WRONG colour on a
+            // light-mode system because cgColor resolves against system
+            // appearance, not the per-window .appearance we set.
+            let bar = NSVisualEffectView(
                 frame: NSRect(x: 0, y: 0, width: bounds.width, height: statusBarHeight))
-            statusBar.autoresizingMask = [.width]
-            statusBar.wantsLayer = true
-            statusBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            bar.autoresizingMask = [.width]
+            bar.material = .titlebar
+            bar.state = .active
+            bar.blendingMode = .withinWindow
+            statusBar = bar
             contentView.addSubview(statusBar)
 
             separator = NSView(
                 frame: NSRect(x: 0, y: statusBarHeight - 1, width: bounds.width, height: 1))
             separator.autoresizingMask = [.width]
             separator.wantsLayer = true
-            separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            // Resolve separatorColor in the window's appearance context so we
+            // get the right shade (the bridge can flip appearance later — see
+            // updateAppearance — but a 1-px line is forgiving enough that we
+            // don't bother re-resolving on every flip).
+            window?.effectiveAppearance.performAsCurrentDrawingAppearance {
+                separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            }
             contentView.addSubview(separator)
 
             statusDot = NSView(frame: NSRect(x: 12, y: 9, width: 10, height: 10))
