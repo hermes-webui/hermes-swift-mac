@@ -353,18 +353,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             browser.updateStatus(tunnelManager.status, host: host, port: port)
         }
 
-        // Cascade non-first windows from the front-most window so each new window/tab
-        // is visibly stacked. AppKit's tabbing layer ignores this for tabs (they share
-        // the parent frame) but it's the right default for separate-window users.
-        // Persist the next cascade point across calls so rapid Cmd+N produces a clean
-        // diagonal stack rather than every new window cascading from the same anchor.
-        if !isFirstWindow,
-           let win = browser.window,
-           let anchor = (NSApp.keyWindow ?? browserWindows.last?.window) {
-            win.setFrame(anchor.frame, display: false)
-            let from = nextCascadePoint
-                ?? NSPoint(x: anchor.frame.minX, y: anchor.frame.maxY)
-            nextCascadePoint = win.cascadeTopLeft(from: from)
+        // Tabbing decision for non-first windows. We use the explicit
+        // addTabbedWindow API for Cmd+T rather than relying on tabbingMode =
+        // .preferred auto-tab — the auto-tab path is flaky when other state
+        // (e.g. a recently .disallowed sibling, or a prior cascade frame
+        // change) interferes with AppKit's heuristic, which manifests as Cmd+T
+        // opening a separate window instead of joining the existing tab group.
+        // For Cmd+N we still set .disallowed at show-time so the new window
+        // shows standalone, and restore .preferred afterwards so the user can
+        // later merge via Window → Merge All Windows.
+        if !isFirstWindow {
+            if asTab,
+               let host = (NSApp.keyWindow ?? browserWindows.last?.window),
+               let newWindow = browser.window {
+                host.addTabbedWindow(newWindow, ordered: .above)
+            } else if !asTab {
+                browser.window?.tabbingMode = .disallowed
+                // Cascade only for separate windows; tabs share the parent frame.
+                if let win = browser.window,
+                   let anchor = (NSApp.keyWindow ?? browserWindows.last?.window) {
+                    win.setFrame(anchor.frame, display: false)
+                    let from = nextCascadePoint
+                        ?? NSPoint(x: anchor.frame.minX, y: anchor.frame.maxY)
+                    nextCascadePoint = win.cascadeTopLeft(from: from)
+                }
+            }
         }
 
         // Fix #52: set alphaValue=0 BEFORE showWindow on the very first window only
