@@ -43,6 +43,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var preferencesWindow: PreferencesWindowController?
     var updaterController: SPUStandardUpdaterController!
 
+    /// The appearance currently in effect for all Hermes windows. Updated by
+    /// BrowserWindowController's theme bridge each time the web UI reports a new
+    /// background colour. New windows (Preferences, Error, Splash, secondary
+    /// browser) read this on init so they open in the matching theme. Defaults
+    /// to .darkAqua so the very first window is dark before the bridge fires
+    /// (matches the hardcoded #1a1a1a pre-paint background).
+    var currentAppearance: NSAppearance? = NSAppearance(named: .darkAqua)
+
+    /// Apply a new appearance to every Hermes window (browser + aux). Called by
+    /// the BrowserWindowController theme bridge when the web UI's background
+    /// changes (theme toggle, prefers-color-scheme switch, etc).
+    func updateAppearance(_ appearance: NSAppearance?) {
+        guard appearance?.name != currentAppearance?.name else { return }
+        currentAppearance = appearance
+        browserWindows.forEach { $0.window?.appearance = appearance }
+        preferencesWindow?.window?.appearance = appearance
+        errorWindow?.window?.appearance = appearance
+        splashWindow?.window?.appearance = appearance
+    }
+
     // Global hotkey state (fix #6, Carbon-based — no Accessibility permission required)
     private var carbonHotKeyRef: EventHotKeyRef?
     private var carbonEventHandler: EventHandlerRef?

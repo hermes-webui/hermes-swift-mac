@@ -168,14 +168,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // (Window menu, Dock, accessibility, Mission Control).
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        // Force dark AppKit chrome regardless of the user's system appearance.
-        // The Hermes web UI is always dark; without this, AppKit renders the
-        // title bar and (especially) the tab bar in their light variant on
-        // light-mode systems — the active tab becomes a bright white strip
-        // against the dark web content, which reads as broken. Forcing
-        // darkAqua keeps tab bar, traffic lights, and any AppKit chrome
-        // visually consistent with the page.
-        window.appearance = NSAppearance(named: .darkAqua)
+        // Initial appearance — matches whatever the web UI is currently using
+        // (tracked on AppDelegate). The theme bridge in buildUI() updates it
+        // dynamically when the page reports its background color, so the
+        // AppKit chrome (title bar, tab bar, traffic lights, status bar) stays
+        // visually consistent with the page across light/dark/system themes.
+        // Falls back to .darkAqua before the bridge has reported.
+        window.appearance = (NSApp.delegate as? AppDelegate)?.currentAppearance
+            ?? NSAppearance(named: .darkAqua)
 
         // Persist and restore window frame across launches — only for the first
         // (primary) window of the session. Secondary multi-window/tab instances skip
@@ -314,6 +314,59 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         )
         config.userContentController.addUserScript(notifyScript)
         config.userContentController.add(self, name: "hermesNotify")
+
+        // Theme bridge: report the page's effective background color to Swift so
+        // window.appearance can follow the web UI's actual theme (light / dark /
+        // system). The page's background changes when the user toggles theme or
+        // when the OS appearance changes (for system-tracking themes); this
+        // reports on initial paint, on classList/style mutations of <html>/<body>,
+        // on window focus, and on prefers-color-scheme media changes.
+        let themeBridgeScript = WKUserScript(
+            source: """
+                (function() {
+                    let lastReported = null;
+                    function report() {
+                        const html = document.documentElement;
+                        const body = document.body;
+                        const bodyBg = body ? getComputedStyle(body).backgroundColor : null;
+                        const htmlBg = getComputedStyle(html).backgroundColor;
+                        const isTransparent = (c) => !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)';
+                        const bg = !isTransparent(bodyBg) ? bodyBg : htmlBg;
+                        if (bg && bg !== lastReported) {
+                            lastReported = bg;
+                            window.webkit.messageHandlers.hermesTheme.postMessage(bg);
+                        }
+                    }
+                    const observer = new MutationObserver(() => requestAnimationFrame(report));
+                    function start() {
+                        report();
+                        observer.observe(document.documentElement, {
+                            attributes: true,
+                            attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
+                        });
+                        if (document.body) {
+                            observer.observe(document.body, {
+                                attributes: true,
+                                attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
+                            });
+                        }
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', start);
+                    } else {
+                        start();
+                    }
+                    window.addEventListener('focus', report);
+                    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+                    if (mq.addEventListener) mq.addEventListener('change', report);
+                    else if (mq.addListener) mq.addListener(report);
+                })();
+                """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(themeBridgeScript)
+        config.userContentController.add(self, name: "hermesTheme")
 
         let webFrame = NSRect(
             x: 0, y: statusBarHeight, width: bounds.width, height: bounds.height - statusBarHeight)
@@ -612,7 +665,62 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     // Cache auth status so we don't call requestAuthorization on every message.
     private var notificationAuthGranted: Bool? = nil
 
+    /// Parse a CSS colour string (`rgb(...)`, `rgba(...)`, or `#RRGGBB`/`#RGB`)
+    /// and return whether its perceived luminance falls in the "dark" half. Used
+    /// by the theme bridge to map a web-UI background to .darkAqua vs .aqua.
+    /// Returns true (dark) on parse failure so we err on the side of preserving
+    /// the dark-by-default look.
+    static func cssColorIsDark(_ css: String) -> Bool {
+        let s = css.trimmingCharacters(in: .whitespaces)
+        var r: Double = 0, g: Double = 0, b: Double = 0
+        if s.hasPrefix("#") {
+            // #RGB or #RRGGBB
+            let hex = String(s.dropFirst())
+            func parseHex(_ str: Substring) -> Double? {
+                guard let v = UInt8(str, radix: 16) else { return nil }
+                return Double(v) / 255.0
+            }
+            if hex.count == 3 {
+                guard let rr = parseHex(hex.prefix(1) + hex.prefix(1)),
+                      let gg = parseHex(hex.dropFirst().prefix(1) + hex.dropFirst().prefix(1)),
+                      let bb = parseHex(hex.dropFirst(2).prefix(1) + hex.dropFirst(2).prefix(1))
+                else { return true }
+                r = rr; g = gg; b = bb
+            } else if hex.count == 6 {
+                guard let rr = parseHex(hex.prefix(2)),
+                      let gg = parseHex(hex.dropFirst(2).prefix(2)),
+                      let bb = parseHex(hex.dropFirst(4).prefix(2))
+                else { return true }
+                r = rr; g = gg; b = bb
+            } else { return true }
+        } else if s.hasPrefix("rgb") {
+            // rgb(R, G, B) or rgba(R, G, B, A) — extract first three integer-ish components
+            let inside = s.drop(while: { $0 != "(" }).dropFirst().prefix(while: { $0 != ")" })
+            let parts = inside.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count >= 3,
+                  let rr = Double(parts[0]),
+                  let gg = Double(parts[1]),
+                  let bb = Double(parts[2])
+            else { return true }
+            r = rr / 255; g = gg / 255; b = bb / 255
+        } else {
+            return true
+        }
+        // WCAG-ish relative luminance (linear approximation, good enough to bisect)
+        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return luminance < 0.5
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Theme bridge: web UI reports its effective background colour. Compute
+        // luminance and propagate the resulting appearance to all windows via
+        // AppDelegate (browser + Preferences + Error + Splash all match).
+        if message.name == "hermesTheme", let css = message.body as? String {
+            let isDark = Self.cssColorIsDark(css)
+            let target = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            (NSApp.delegate as? AppDelegate)?.updateAppearance(target)
+            return
+        }
         guard message.name == "hermesNotify",
               let body = message.body as? [String: String],
               let title = body["title"],

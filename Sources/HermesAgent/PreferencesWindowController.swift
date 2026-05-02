@@ -30,6 +30,10 @@ class PreferencesWindowController: NSWindowController {
         )
         window.title = "Preferences"
         window.center()
+        // Match whatever theme the web UI is currently using (tracked on AppDelegate).
+        // Falls back to .darkAqua before the bridge has reported (e.g. on first launch).
+        window.appearance = (NSApp.delegate as? AppDelegate)?.currentAppearance
+            ?? NSAppearance(named: .darkAqua)
         super.init(window: window)
         buildUI()
     }

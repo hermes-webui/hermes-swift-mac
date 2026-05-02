@@ -13,6 +13,9 @@ class SplashWindowController: NSWindowController {
         window.backgroundColor = .clear
         window.level = .floating
         window.center()
+        // Match the active web-UI theme tracked on AppDelegate; falls back to dark.
+        window.appearance = (NSApp.delegate as? AppDelegate)?.currentAppearance
+            ?? NSAppearance(named: .darkAqua)
         super.init(window: window)
 
         let container = NSView(frame: window.contentView!.bounds)
