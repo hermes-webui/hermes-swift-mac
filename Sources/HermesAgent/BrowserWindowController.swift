@@ -659,16 +659,25 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
-        if let httpResponse = navigationResponse.response as? HTTPURLResponse,
-            httpResponse.statusCode >= 500
-        {
-            decisionHandler(.cancel)
-            guard !didReportNavigationFailure else { return }
-            didReportNavigationFailure = true
-            onNavigationFailed?()
-        } else {
-            decisionHandler(.allow)
+        if let httpResponse = navigationResponse.response as? HTTPURLResponse {
+            if httpResponse.statusCode >= 500 {
+                decisionHandler(.cancel)
+                guard !didReportNavigationFailure else { return }
+                didReportNavigationFailure = true
+                onNavigationFailed?()
+                return
+            }
+            let disposition = httpResponse.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+            if disposition.lowercased().hasPrefix("attachment") || !navigationResponse.canShowMIMEType {
+                decisionHandler(.download)
+                return
+            }
         }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
     }
 
     // MARK: - File upload
@@ -955,6 +964,39 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                     NSWorkspace.shared.open(url)
                 }
             }
+        }
+    }
+}
+
+// MARK: - WKDownloadDelegate
+
+extension BrowserWindowController: WKDownloadDelegate {
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedFilename
+        guard let win = window else {
+            completionHandler(nil)
+            return
+        }
+        panel.beginSheetModal(for: win) { result in
+            completionHandler(result == .OK ? panel.url : nil)
+        }
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {}
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let win = self?.window else { return }
+            let alert = NSAlert()
+            alert.messageText = "Download Failed"
+            alert.informativeText = error.localizedDescription
+            alert.beginSheetModal(for: win)
         }
     }
 }
