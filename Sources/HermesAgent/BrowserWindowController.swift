@@ -136,6 +136,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// and chat content).
     private var tabbedWindowsObservation: NSKeyValueObservation?
 
+    /// KVO observation for webView.title — propagates `document.title` changes
+    /// (i.e. the active conversation's name in hermes-webui) into window.title,
+    /// which is what AppKit shows on the tab.
+    private var pageTitleObservation: NSKeyValueObservation?
+
     /// - Parameter useFrameAutosave: When true (default), the window persists its
     ///   frame to UserDefaults under HermesMainWindow. Only the *first* window of a
     ///   multi-window session should set this true; secondary windows pass false so
@@ -239,6 +244,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     deinit {
         tabbedWindowsObservation?.invalidate()
+        pageTitleObservation?.invalidate()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -321,6 +327,16 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         config.userContentController.addUserScript(notifyScript)
         config.userContentController.add(self, name: "hermesNotify")
 
+        // The colour the chrome was painted with at this WKWebView's birth —
+        // either the cached colour (loaded by AppDelegate.loadCachedTheme on
+        // launch) or the safe-dark fallback for first-ever launches. Used by
+        // the theme bridge below to suppress sample reports that match it,
+        // and by underPageBackgroundColor + darkModeScript further down so
+        // every layer of the WebView paints this colour pre-page-load.
+        let prePaintColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        let prePaintHex = Self.hexString(for: prePaintColor)
+
         // Theme bridge: report the page's effective background color to Swift so
         // window.appearance can follow the web UI's actual theme (light / dark /
         // system). The page's background changes when the user toggles theme or
@@ -330,9 +346,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let themeBridgeScript = WKUserScript(
             source: """
                 (function() {
-                    let lastReported = null;
+                    // The colour the chrome was painted with at WKWebView init —
+                    // either the cached colour or the safe-dark fallback. We
+                    // suppress any sample that matches this so transient page-
+                    // mount colours never flip the chrome unnecessarily.
+                    const cachedHex = '\(prePaintHex)'.toUpperCase();
+                    let lastReportedHex = null;
                     const isOpaque = (c) =>
                         c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)';
+                    function rgbStringToHex(s) {
+                        const m = s.match(/^rgba?\\((\\d+)\\D+(\\d+)\\D+(\\d+)/);
+                        if (!m) return s.toUpperCase();
+                        return '#' + [m[1], m[2], m[3]].map(function(n) {
+                            return parseInt(n, 10).toString(16)
+                                .padStart(2, '0').toUpperCase();
+                        }).join('');
+                    }
                     // Walk the stack of elements at a viewport pixel and return the
                     // first opaque background. Robust against web apps where <html>
                     // and <body> are transparent and the actual paint comes from a
@@ -361,27 +390,48 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                         if (isOpaque(bodyBg)) return bodyBg;
                         return getComputedStyle(document.documentElement).backgroundColor;
                     }
-                    // Stability gate: a sampled colour must persist for at least
-                    // STABILITY_MS before we send it to Swift. Transient page-mount
-                    // states (a brief dark flash before the React/Vue tree applies
-                    // the user's theme CSS) get suppressed entirely; legitimate
-                    // theme changes propagate after the short delay.
+                    // Two-layer suppression to prevent transient mount flickers
+                    // (chrome was already cream from cache → page briefly paints
+                    // dark during React mount → page settles back to cream).
+                    //
+                    //   1. Match-suppression: if the sample matches the colour
+                    //      the chrome currently shows (cachedHex initially, then
+                    //      lastReportedHex after the bridge has fired), do
+                    //      nothing — the chrome is already correct, no IPC, no
+                    //      flicker. Any pending transient is also cleared so a
+                    //      mid-flight dark sample never gets sent if the page
+                    //      settles back to the chrome colour.
+                    //
+                    //   2. Stability gate: when the sample DOES differ from the
+                    //      chrome's current colour, queue it and only fire if
+                    //      it stays unchanged for STABILITY_MS. Real theme
+                    //      changes propagate after the short delay; transients
+                    //      are dropped before the timer fires.
                     const STABILITY_MS = 700;
                     let pendingColor = null;
+                    let pendingHex = null;
                     let pendingTimer = null;
                     function report() {
                         const bg = effectiveBackground();
                         if (!bg) return;
-                        if (bg === lastReported) return;
-                        if (bg === pendingColor) return;
+                        const hex = rgbStringToHex(bg);
+                        const currentChromeHex = lastReportedHex || cachedHex;
+                        if (hex === currentChromeHex) {
+                            // Chrome already shows this — drop any pending
+                            // transient so the timer doesn't fire later with
+                            // a stale "different" colour.
+                            pendingColor = null;
+                            pendingHex = null;
+                            clearTimeout(pendingTimer);
+                            return;
+                        }
+                        if (hex === pendingHex) return;
                         pendingColor = bg;
+                        pendingHex = hex;
                         clearTimeout(pendingTimer);
                         pendingTimer = setTimeout(function() {
-                            // Only fire if the colour we queued is still the
-                            // current effective background — a flicker resets
-                            // pendingColor and re-arms the timer.
-                            if (pendingColor === bg && bg !== lastReported) {
-                                lastReported = bg;
+                            if (pendingHex === hex) {
+                                lastReportedHex = hex;
                                 window.webkit.messageHandlers.hermesTheme.postMessage(bg);
                             }
                         }, STABILITY_MS);
@@ -430,14 +480,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.navigationDelegate = self
         webView.allowsMagnification = true
 
-        // The pre-paint background colour. Cached from the last theme report
-        // so a Cmd+R or new-tab opens with the correct theme rather than
-        // flashing dark and waiting for the bridge to re-detect light.
-        // Falls back to #1a1a1a (dark) when no cache exists — that matches the
-        // safe default for first-ever launches.
-        let prePaintColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
-            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
-        let prePaintHex = Self.hexString(for: prePaintColor)
+        // Mirror document.title into window.title so the AppKit tab shows
+        // the active conversation name (truncated). KVO fires on every page
+        // title change including SPA navigations.
+        pageTitleObservation = webView.observe(\.title, options: [.new]) {
+            [weak self] _, _ in
+            DispatchQueue.main.async { self?.refreshTabTitle() }
+        }
 
         // Fix #23 / #52: prevent white-or-wrong-colour flash on startup. The
         // overscroll gutter and the body/html pre-paint background both need
@@ -689,19 +738,39 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     }
 
     private func updateWindowTitle(healthy: Bool) {
-        let hostDisplay: String
-        if let url = URL(string: urlString), let host = url.host {
-            let port = url.port.map { ":\($0)" } ?? ""
-            hostDisplay = "\(host)\(port)"
-        } else {
-            hostDisplay = urlString
-        }
-        let dot = healthy ? "●" : "○"
-        window?.title = "\(appTitle)  \(dot) \(hostDisplay)"
-        // Update Dock badge. The cast is safe — AppDelegate is always the app delegate
-        // in this single-delegate architecture. A ConnectionStatusObserver protocol
-        // would decouple this but adds boilerplate not warranted for a utility method.
+        // Update Dock badge first so it stays accurate even when the tab title
+        // is fed from document.title (which doesn't carry health info).
         (NSApp.delegate as? AppDelegate)?.setOfflineBadge(!healthy)
+        refreshTabTitle()
+    }
+
+    /// Compute and apply the tab/window title. Prefers `webView.title` (i.e.
+    /// the active hermes-webui conversation's name) when available, truncated
+    /// to fit a reasonable tab width. Falls back to "Hermes Agent  ● host" in
+    /// direct mode (so health stays visible) or just "Hermes Agent" in SSH
+    /// mode (the SSH status bar already surfaces host info).
+    private func refreshTabTitle() {
+        let pageTitle = (webView?.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let display: String
+        if !pageTitle.isEmpty {
+            display = pageTitle.count > 40
+                ? String(pageTitle.prefix(38)) + "…"
+                : pageTitle
+        } else if connectionMode == "direct" {
+            let dot = isHealthy ? "●" : "○"
+            let host: String
+            if let url = URL(string: urlString), let h = url.host {
+                let port = url.port.map { ":\($0)" } ?? ""
+                host = "\(h)\(port)"
+            } else {
+                host = urlString
+            }
+            display = "\(appTitle)  \(dot) \(host)"
+        } else {
+            display = appTitle
+        }
+        window?.title = display
     }
 
     func updateStatus(_ status: TunnelStatus, host: String, port: Int) {
