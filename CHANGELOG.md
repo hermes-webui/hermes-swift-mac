@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.5.4] — 2026-05-02
+
+### Fixed
+- **Download links now save instead of rendering raw content** — clicking a download link in the web UI loaded the raw response data into the WKWebView window instead of prompting for a save location. The `decidePolicyFor navigationResponse` handler now intercepts responses whose `Content-Disposition` header begins with `attachment` (case-insensitive) **or** whose MIME type WebKit can't render, and hands them off to `WKDownload`. The new `WKDownloadDelegate` extension presents an `NSSavePanel` pre-filled with the server's suggested filename, runs as a sheet on the main window, and surfaces failures via a sheet alert. Closes the gap where attachments from the chat UI (file exports, downloads from previous sessions, etc.) had no way to be saved. (#66, thanks @redsparklabs)
+
 ## [v1.5.3] — 2026-04-28
 ### Fixed
 - **Window drag regression** — after the v1.5.0 `.fullSizeContentView` change, the main window could no longer be moved by dragging the title bar. `WKWebView` covers the full content area including the transparent native title bar strip and intercepts all mouse events; `-webkit-app-region: drag` in the web page's CSS has no effect on `NSWindow` dragging. Fixed by adding a thin transparent `TitleBarDragView` overlay positioned over the title bar zone (height 38 px, matching `.app-titlebar` in the web UI) that calls `window.performDrag(with:)` on `mouseDown`. The view is fully transparent and only captures hits within its own bounds. Traffic lights live in `NSThemeFrame` above `contentView` and are unaffected. (fixes #64)
