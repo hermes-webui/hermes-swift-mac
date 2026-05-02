@@ -51,16 +51,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// (matches the hardcoded #1a1a1a pre-paint background).
     var currentAppearance: NSAppearance? = NSAppearance(named: .darkAqua)
 
-    /// Apply a new appearance to every Hermes window (browser + aux). Called by
-    /// the BrowserWindowController theme bridge when the web UI's background
-    /// changes (theme toggle, prefers-color-scheme switch, etc).
-    func updateAppearance(_ appearance: NSAppearance?) {
-        guard appearance?.name != currentAppearance?.name else { return }
-        currentAppearance = appearance
-        browserWindows.forEach { $0.window?.appearance = appearance }
-        preferencesWindow?.window?.appearance = appearance
-        errorWindow?.window?.appearance = appearance
-        splashWindow?.window?.appearance = appearance
+    /// The window background colour matching the current web-UI theme. Used as
+    /// `NSWindow.backgroundColor` on browser windows so the tab-bar strip
+    /// blends with the page instead of showing through the hardcoded
+    /// pre-paint #1a1a1a. Defaults to that #1a1a1a so the very first window
+    /// looks right before the bridge fires.
+    var currentBackgroundColor: NSColor =
+        NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+
+    /// Apply a new appearance + window background colour to every Hermes window.
+    /// Called by the BrowserWindowController theme bridge when the web UI
+    /// reports a new background.
+    func updateAppearance(_ appearance: NSAppearance?, backgroundColor: NSColor? = nil) {
+        let appearanceChanged = appearance?.name != currentAppearance?.name
+        let bgChanged = backgroundColor != nil && backgroundColor != currentBackgroundColor
+        guard appearanceChanged || bgChanged else { return }
+        if appearanceChanged { currentAppearance = appearance }
+        if let bg = backgroundColor { currentBackgroundColor = bg }
+        for browser in browserWindows {
+            if appearanceChanged { browser.window?.appearance = appearance }
+            if let bg = backgroundColor {
+                browser.window?.backgroundColor = bg
+                // Push the colour through to the SSH footer so it matches the
+                // tab-bar strip (which paints with window.backgroundColor) one
+                // to one — same RGB for every chrome surface.
+                browser.applyChromeBackgroundColor(bg)
+            }
+        }
+        if appearanceChanged {
+            preferencesWindow?.window?.appearance = appearance
+            errorWindow?.window?.appearance = appearance
+            splashWindow?.window?.appearance = appearance
+        }
     }
 
     // Global hotkey state (fix #6, Carbon-based — no Accessibility permission required)

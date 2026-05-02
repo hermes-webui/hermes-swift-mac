@@ -160,7 +160,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // content loads. Using a literal dark value (not windowBackgroundColor)
         // ensures the gap between window-visible and first-paint is dark in
         // *all* colour schemes — windowBackgroundColor is white in light mode.
-        window.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        // Multi-window theme tracking: if AppDelegate already knows the current
+        // theme background colour (a sibling browser window has reported), use
+        // that so this new window/tab opens with the right colour and the tab
+        // bar strip blends correctly. Falls back to the dark pre-paint colour
+        // for the very first window.
+        window.backgroundColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
         super.init(window: window)
 
         // Fix #57: extend web content under the native title bar.
@@ -478,18 +484,19 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
-            // NSVisualEffectView tracks effective appearance automatically, so
-            // the status bar background stays in sync when the theme bridge
-            // flips the window between .aqua and .darkAqua. Plain NSView with
-            // a baked .cgColor would render with the WRONG colour on a
-            // light-mode system because cgColor resolves against system
-            // appearance, not the per-window .appearance we set.
-            let bar = NSVisualEffectView(
+            // Plain NSView with an explicit colour — we want the SSH footer to
+            // match the page background EXACTLY, sharing the same RGB as the
+            // tab-bar strip (which shows window.backgroundColor through). An
+            // NSVisualEffectView would introduce vibrancy that tints the colour
+            // off, breaking the visual seam. The bar stays in sync via
+            // AppDelegate.updateAppearance → applyChromeBackgroundColor.
+            let bar = NSView(
                 frame: NSRect(x: 0, y: 0, width: bounds.width, height: statusBarHeight))
             bar.autoresizingMask = [.width]
-            bar.material = .titlebar
-            bar.state = .active
-            bar.blendingMode = .withinWindow
+            bar.wantsLayer = true
+            let initialBg = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+                ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+            bar.layer?.backgroundColor = initialBg.cgColor
             statusBar = bar
             contentView.addSubview(statusBar)
 
@@ -710,15 +717,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var notificationAuthGranted: Bool? = nil
 
     /// Parse a CSS colour string (`rgb(...)`, `rgba(...)`, or `#RRGGBB`/`#RGB`)
-    /// and return whether its perceived luminance falls in the "dark" half. Used
-    /// by the theme bridge to map a web-UI background to .darkAqua vs .aqua.
-    /// Returns true (dark) on parse failure so we err on the side of preserving
-    /// the dark-by-default look.
-    static func cssColorIsDark(_ css: String) -> Bool {
+    /// into normalised RGB components in [0, 1]. Returns nil on parse failure.
+    static func parseCSSColor(_ css: String) -> (r: Double, g: Double, b: Double)? {
         let s = css.trimmingCharacters(in: .whitespaces)
-        var r: Double = 0, g: Double = 0, b: Double = 0
         if s.hasPrefix("#") {
-            // #RGB or #RRGGBB
             let hex = String(s.dropFirst())
             func parseHex(_ str: Substring) -> Double? {
                 guard let v = UInt8(str, radix: 16) else { return nil }
@@ -728,41 +730,56 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                 guard let rr = parseHex(hex.prefix(1) + hex.prefix(1)),
                       let gg = parseHex(hex.dropFirst().prefix(1) + hex.dropFirst().prefix(1)),
                       let bb = parseHex(hex.dropFirst(2).prefix(1) + hex.dropFirst(2).prefix(1))
-                else { return true }
-                r = rr; g = gg; b = bb
-            } else if hex.count == 6 {
+                else { return nil }
+                return (rr, gg, bb)
+            }
+            if hex.count == 6 {
                 guard let rr = parseHex(hex.prefix(2)),
                       let gg = parseHex(hex.dropFirst(2).prefix(2)),
                       let bb = parseHex(hex.dropFirst(4).prefix(2))
-                else { return true }
-                r = rr; g = gg; b = bb
-            } else { return true }
-        } else if s.hasPrefix("rgb") {
-            // rgb(R, G, B) or rgba(R, G, B, A) — extract first three integer-ish components
+                else { return nil }
+                return (rr, gg, bb)
+            }
+            return nil
+        }
+        if s.hasPrefix("rgb") {
             let inside = s.drop(while: { $0 != "(" }).dropFirst().prefix(while: { $0 != ")" })
             let parts = inside.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             guard parts.count >= 3,
                   let rr = Double(parts[0]),
                   let gg = Double(parts[1]),
                   let bb = Double(parts[2])
-            else { return true }
-            r = rr / 255; g = gg / 255; b = bb / 255
-        } else {
-            return true
+            else { return nil }
+            return (rr / 255, gg / 255, bb / 255)
         }
-        // WCAG-ish relative luminance (linear approximation, good enough to bisect)
-        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return nil
+    }
+
+    /// Whether a CSS colour falls in the "dark" half by perceived luminance.
+    /// Returns true (dark) on parse failure so we err on the side of preserving
+    /// the dark-by-default look.
+    static func cssColorIsDark(_ css: String) -> Bool {
+        guard let rgb = parseCSSColor(css) else { return true }
+        // WCAG-ish relative luminance (linear approximation, good enough to bisect).
+        let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
         return luminance < 0.5
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // Theme bridge: web UI reports its effective background colour. Compute
-        // luminance and propagate the resulting appearance to all windows via
-        // AppDelegate (browser + Preferences + Error + Splash all match).
+        // Theme bridge: web UI reports its effective background colour.
+        // Propagate BOTH the appearance (controls AppKit chrome variants) AND
+        // the actual NSColor (used as window.backgroundColor so the tab-bar
+        // strip blends with the page instead of showing the hardcoded #1a1a1a
+        // through). Without the second piece, the tab bar zone stays dark even
+        // with .aqua appearance because window.backgroundColor was hardcoded
+        // dark in init() to prevent the white-flash-on-launch (fix #52).
         if message.name == "hermesTheme", let css = message.body as? String {
-            let isDark = Self.cssColorIsDark(css)
-            let target = NSAppearance(named: isDark ? .darkAqua : .aqua)
-            (NSApp.delegate as? AppDelegate)?.updateAppearance(target)
+            guard let rgb = Self.parseCSSColor(css) else { return }
+            let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
+            let isDark = luminance < 0.5
+            let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            let bgColor = NSColor(red: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1.0)
+            (NSApp.delegate as? AppDelegate)?.updateAppearance(appearance, backgroundColor: bgColor)
             return
         }
         guard message.name == "hermesNotify",
@@ -1024,6 +1041,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Window resize can also change contentLayoutRect (e.g. fullscreen toggle
         // mid-resize). Recompute the tab-bar-aware webView frame on every resize.
         updateWebViewLayout()
+    }
+
+    /// Apply a new chrome background colour. Called by AppDelegate.updateAppearance
+    /// when the theme bridge reports a new web-UI background — keeps the SSH
+    /// status bar in lock-step with window.backgroundColor (which the tab-bar
+    /// strip shows through), so all three surfaces share the same exact RGB.
+    func applyChromeBackgroundColor(_ color: NSColor) {
+        statusBar?.layer?.backgroundColor = color.cgColor
+        // Re-resolve the separator colour in the new appearance so its tone
+        // matches the surroundings (1-px line, but still nice to keep crisp).
+        if let sep = separator {
+            window?.effectiveAppearance.performAsCurrentDrawingAppearance {
+                sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            }
+        }
     }
 
     // MARK: - Full-screen state persistence (fix #43)
