@@ -168,6 +168,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // (Window menu, Dock, accessibility, Mission Control).
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // Force dark AppKit chrome regardless of the user's system appearance.
+        // The Hermes web UI is always dark; without this, AppKit renders the
+        // title bar and (especially) the tab bar in their light variant on
+        // light-mode systems — the active tab becomes a bright white strip
+        // against the dark web content, which reads as broken. Forcing
+        // darkAqua keeps tab bar, traffic lights, and any AppKit chrome
+        // visually consistent with the page.
+        window.appearance = NSAppearance(named: .darkAqua)
 
         // Persist and restore window frame across launches — only for the first
         // (primary) window of the session. Secondary multi-window/tab instances skip
