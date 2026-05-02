@@ -778,7 +778,9 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
             let isDark = luminance < 0.5
             let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
-            let bgColor = NSColor(red: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1.0)
+            // sRGB so the components round-trip cleanly to UserDefaults
+            // (the calibrated-RGB constructor would shift values slightly).
+            let bgColor = NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1.0)
             (NSApp.delegate as? AppDelegate)?.updateAppearance(appearance, backgroundColor: bgColor)
             return
         }

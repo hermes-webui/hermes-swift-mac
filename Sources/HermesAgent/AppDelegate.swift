@@ -83,6 +83,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             errorWindow?.window?.appearance = appearance
             splashWindow?.window?.appearance = appearance
         }
+        // Persist so next launch + new tabs/windows can open with the last-seen
+        // theme instead of flashing dark while the bridge re-checks.
+        if bgChanged { persistCurrentTheme() }
+    }
+
+    // MARK: - Theme cache (UserDefaults)
+
+    private static let themeCacheKeyR = "themeCacheRed"
+    private static let themeCacheKeyG = "themeCacheGreen"
+    private static let themeCacheKeyB = "themeCacheBlue"
+    private static let themeCacheKeyTimestamp = "themeCacheTimestamp"
+    /// How fresh the cache must be to be trusted on launch. Beyond this we
+    /// fall back to .darkAqua / #1a1a1a (the safe default that matches the
+    /// pre-paint dark background, avoiding a white-flash for new users).
+    private static let themeCacheStaleness: TimeInterval = 7 * 24 * 3600
+
+    /// Restore currentAppearance + currentBackgroundColor from UserDefaults if
+    /// the cache is fresh enough. Called once at applicationDidFinishLaunching
+    /// before startTunnel so the splash and the first browser window open with
+    /// the last-seen theme.
+    func loadCachedTheme() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.themeCacheKeyTimestamp) != nil else { return }
+        let timestamp = defaults.double(forKey: Self.themeCacheKeyTimestamp)
+        let age = Date().timeIntervalSince1970 - timestamp
+        guard age >= 0, age < Self.themeCacheStaleness else { return }
+        let r = defaults.double(forKey: Self.themeCacheKeyR)
+        let g = defaults.double(forKey: Self.themeCacheKeyG)
+        let b = defaults.double(forKey: Self.themeCacheKeyB)
+        // Sanity: stored components live in [0, 1]. Reject anything else and
+        // keep the .darkAqua/#1a1a1a defaults so a corrupted store can't
+        // produce a transparent or oversaturated chrome colour.
+        guard (0.0...1.0).contains(r), (0.0...1.0).contains(g), (0.0...1.0).contains(b)
+        else { return }
+        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        let isDark = luminance < 0.5
+        currentAppearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        currentBackgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    /// Write currentBackgroundColor + a fresh timestamp to UserDefaults.
+    private func persistCurrentTheme() {
+        // Convert to sRGB to lock in stable component values regardless of the
+        // colour space the bridge happened to construct (calibrated vs sRGB).
+        let sRGB = currentBackgroundColor.usingColorSpace(.sRGB) ?? currentBackgroundColor
+        let defaults = UserDefaults.standard
+        defaults.set(Double(sRGB.redComponent), forKey: Self.themeCacheKeyR)
+        defaults.set(Double(sRGB.greenComponent), forKey: Self.themeCacheKeyG)
+        defaults.set(Double(sRGB.blueComponent), forKey: Self.themeCacheKeyB)
+        defaults.set(Date().timeIntervalSince1970, forKey: Self.themeCacheKeyTimestamp)
     }
 
     // Global hotkey state (fix #6, Carbon-based — no Accessibility permission required)
@@ -119,6 +169,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenu()
         seedDefaultsIfNeeded()
+        // Restore last-seen theme before any window opens so the splash and the
+        // first browser window paint with the right colour instead of flashing
+        // dark while the bridge runs its first sample.
+        loadCachedTheme()
         warmUpCaptureSubsystem()
         setupGlobalHotkey()
         startTunnel()
