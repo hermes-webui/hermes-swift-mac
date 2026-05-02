@@ -211,7 +211,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// preference is on.
     @discardableResult
     private func openBrowser(
-        targetURL: String, mode: String, sshHost: String?, localPort: Int?
+        targetURL: String, mode: String, sshHost: String?, localPort: Int?,
+        asTab: Bool = false
     ) -> BrowserWindowController {
         let isFirstWindow = browserWindows.isEmpty
         let browser = BrowserWindowController(
@@ -220,6 +221,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             connectionMode: mode,
             useFrameAutosave: isFirstWindow
         )
+        // Cmd+N (asTab=false, non-first): force a separate window even though the
+        // window's tabbingMode is .preferred. Setting .disallowed at show-time
+        // bypasses the auto-tab decision; we restore .preferred immediately after
+        // so the user can later use Window → Merge All Windows. The first window
+        // has no existing tab group to join, so this guard is a no-op for it.
+        if !asTab && !isFirstWindow {
+            browser.window?.tabbingMode = .disallowed
+        }
         browser.onReconnect = { [weak self] in
             self?.startTunnel()
         }
@@ -274,6 +283,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         browser.showWindow(nil)
         browserWindows.append(browser)
 
+        // Cmd+N path: restore .preferred after showing standalone so the user can
+        // later merge this window into the tab group via Window → Merge All Windows.
+        // tabbingMode is consulted at show-time for the auto-tab decision; setting
+        // it back to .preferred after show doesn't pull this window into a tab group.
+        if !asTab && !isFirstWindow {
+            DispatchQueue.main.async {
+                browser.window?.tabbingMode = .preferred
+            }
+        }
+
         // Restore full-screen state (fix #43) — only on the very first window of the
         // session. Subsequent windows opened by Cmd+N inherit the system default; the
         // user can full-screen them individually.
@@ -290,16 +309,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return browser
     }
 
-    /// New window / new tab entry point — used by Cmd+N, Cmd+T, the Window menu's
-    /// "New Window" item, and AppKit's tab-bar plus button (via newWindowForTab).
-    /// Always uses the current connection mode and configured target URL; if no
-    /// connection is established yet, this is a no-op (the user is on splash/error).
+    /// Cmd+N — open a new separate window. Always opens standalone, even if other
+    /// browser windows are already grouped into native tabs. The user can later
+    /// merge it into the existing tab group via Window → Merge All Windows.
     @objc func newBrowserWindow() {
+        openNewBrowserSession(asTab: false)
+    }
+
+    /// Cmd+T — open a new tab in the front-most browser window's tab group.
+    /// AppKit's tabbing system (windows share `tabbingIdentifier` + .preferred mode)
+    /// auto-joins the new window into the existing group.
+    @objc func newBrowserTab() {
+        openNewBrowserSession(asTab: true)
+    }
+
+    /// AppKit's tab-bar "+" button forwards through the responder chain looking
+    /// for `newWindowForTab(_:)`. Implementing it on AppDelegate (which is in the
+    /// chain via NSApp) wires the plus button to the new-tab flow specifically —
+    /// the "+" button is conceptually the same as Cmd+T, not Cmd+N.
+    @objc func newWindowForTab(_ sender: Any?) {
+        newBrowserTab()
+    }
+
+    /// Shared entry point for new-window and new-tab actions. Refuses to open
+    /// when there's no live connection (avoids instant-fail windows). When
+    /// asTab=false, openBrowser sets .disallowed at show-time so the new window
+    /// stays standalone instead of auto-joining the existing tab group.
+    private func openNewBrowserSession(asTab: Bool) {
         let defaults = UserDefaults.standard
         let mode = defaults.string(forKey: "connectionMode") ?? "direct"
         let targetURL = defaults.string(forKey: "targetURL") ?? defaultTargetURL
-        // Refuse to open a window when there's no live connection — avoids creating
-        // a window that immediately fails its first navigation.
         if mode == "ssh" && tunnelManager?.status != .connected { return }
         if mode == "direct" && browserWindows.isEmpty {
             // No live first window in direct mode either — let startTunnel handle it.
@@ -310,14 +349,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let port = mode == "ssh"
             ? Int(defaults.string(forKey: "localPort") ?? defaultLocalPort)
             : nil
-        openBrowser(targetURL: targetURL, mode: mode, sshHost: host, localPort: port)
-    }
-
-    /// AppKit's tab-bar plus button forwards through the responder chain looking
-    /// for `newWindowForTab(_:)`. Implementing it on AppDelegate (which is in the
-    /// chain via NSApp) wires the plus button to our new-window flow.
-    @objc func newWindowForTab(_ sender: Any?) {
-        newBrowserWindow()
+        openBrowser(
+            targetURL: targetURL, mode: mode, sshHost: host, localPort: port, asTab: asTab)
     }
 
     private func showErrorWindow(targetURL: String, mode: String) {
@@ -462,7 +495,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(
             withTitle: "New Window", action: #selector(newBrowserWindow), keyEquivalent: "n")
         let newTabItem = NSMenuItem(
-            title: "New Tab", action: #selector(newBrowserWindow), keyEquivalent: "t")
+            title: "New Tab", action: #selector(newBrowserTab), keyEquivalent: "t")
         fileMenu.addItem(newTabItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(

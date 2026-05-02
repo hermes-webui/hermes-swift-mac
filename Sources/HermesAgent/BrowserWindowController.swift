@@ -129,6 +129,13 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var healthTimer: Timer?
     private var isHealthy: Bool = true
 
+    /// KVO observation for window.tabbedWindows. When AppKit adds or removes a
+    /// tab from the group, the tab bar appears/disappears, which shifts the
+    /// window's contentLayoutRect. We resize webView so its top sits below the
+    /// tab bar (preventing the tab bar from clipping the web app's title bar
+    /// and chat content).
+    private var tabbedWindowsObservation: NSKeyValueObservation?
+
     /// - Parameter useFrameAutosave: When true (default), the window persists its
     ///   frame to UserDefaults under HermesMainWindow. Only the *first* window of a
     ///   multi-window session should set this true; secondary windows pass false so
@@ -203,6 +210,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         window.delegate = self
 
         buildUI()
+
+        // Observe tab-group membership so we can shrink the webView when AppKit
+        // adds a tab bar. Without this, the tab bar overlays the top of the web
+        // UI (.app-titlebar and chat content) since .fullSizeContentView puts
+        // webView under the title-bar zone where the tab bar renders.
+        // KVO on tabbedWindows fires on the host window when any tab joins or
+        // leaves the group, including this window.
+        tabbedWindowsObservation = window.observe(\.tabbedWindows, options: [.new]) {
+            [weak self] _, _ in
+            DispatchQueue.main.async { self?.updateWebViewLayout() }
+        }
+    }
+
+    deinit {
+        tabbedWindowsObservation?.invalidate()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -410,6 +432,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             updateWindowTitle(healthy: true)
             startHealthCheck()
         }
+
+        // Initial layout — typically a no-op (single window has no tab bar) but
+        // catches the case where this controller's window gets created into an
+        // existing tab group (rare, but possible during state restoration).
+        updateWebViewLayout()
     }
 
     // MARK: - Paste
@@ -807,6 +834,38 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.becomeFirstResponder()
     }
 
+    // MARK: - Tab-bar-aware layout
+
+    /// Resize webView so the tab bar (when present) doesn't clip the web app's
+    /// top content. With .fullSizeContentView, contentView extends to the top of
+    /// the window, which means webView's top sits in the same vertical zone as
+    /// AppKit's tab bar. When more than one tab is in the group, AppKit shows
+    /// the bar — at which point we pin webView's top to contentLayoutRect.maxY
+    /// (the bottom of the title-bar+tab-bar strip) so the web's `.app-titlebar`
+    /// renders just below the tab bar instead of behind it.
+    /// When the tab bar is absent (single-tab/standalone), we extend webView all
+    /// the way to bounds.height so the v1.5.0 "web titlebar under transparent
+    /// title bar" look is preserved.
+    private func updateWebViewLayout() {
+        guard let win = window, let contentView = win.contentView, webView != nil else { return }
+        let groupCount = win.tabbedWindows?.count ?? 1
+        let tabBarVisible = groupCount > 1
+        let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
+        let topY: CGFloat = tabBarVisible
+            ? win.contentLayoutRect.maxY
+            : contentView.bounds.height
+        let newHeight = max(0, topY - statusBarHeight)
+        webView.frame = NSRect(
+            x: 0, y: statusBarHeight,
+            width: contentView.bounds.width, height: newHeight)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        // Window resize can also change contentLayoutRect (e.g. fullscreen toggle
+        // mid-resize). Recompute the tab-bar-aware webView frame on every resize.
+        updateWebViewLayout()
+    }
+
     // MARK: - Full-screen state persistence (fix #43)
 
     func windowDidEnterFullScreen(_ notification: Notification) {
@@ -816,6 +875,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             "document.documentElement.style.setProperty('--traffic-light-width', '0px');",
             completionHandler: nil
         )
+        // Fullscreen toggles the tab bar's visibility too — recompute layout.
+        updateWebViewLayout()
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
@@ -834,6 +895,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         }
         // Fix #57: restore traffic light clearance after exiting fullscreen.
         injectTrafficLightWidthVar()
+        // Tab bar visibility may have changed across the fullscreen transition.
+        updateWebViewLayout()
     }
 
     // MARK: - Reconnect in place (fix #10)
