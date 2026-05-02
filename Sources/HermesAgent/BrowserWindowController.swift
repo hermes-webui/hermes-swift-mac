@@ -407,7 +407,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                     //      it stays unchanged for STABILITY_MS. Real theme
                     //      changes propagate after the short delay; transients
                     //      are dropped before the timer fires.
-                    const STABILITY_MS = 700;
+                    const STABILITY_MS = 2500;
                     let pendingColor = null;
                     let pendingHex = null;
                     let pendingTimer = null;
@@ -750,8 +750,19 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// direct mode (so health stays visible) or just "Hermes Agent" in SSH
     /// mode (the SSH status bar already surfaces host info).
     private func refreshTabTitle() {
-        let pageTitle = (webView?.title ?? "")
+        let raw = (webView?.title ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip a redundant " — Hermes" / " - Hermes" / " | Hermes" suffix
+        // (optionally " Agent"). hermes-webui sets document.title to
+        // "<conversation> — Hermes"; we're already in the Hermes app, so
+        // the brand suffix is just noise on a Mac tab. Handles em-dash,
+        // hyphen, pipe, and middle-dot separators with surrounding whitespace.
+        let suffixPattern = #"\s+[—\-|·]\s+Hermes(\s+Agent)?\s*$"#
+        let pageTitle = raw.replacingOccurrences(
+            of: suffixPattern,
+            with: "",
+            options: .regularExpression
+        )
         let display: String
         if !pageTitle.isEmpty {
             display = pageTitle.count > 40
