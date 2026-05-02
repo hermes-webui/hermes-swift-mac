@@ -361,12 +361,30 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                         if (isOpaque(bodyBg)) return bodyBg;
                         return getComputedStyle(document.documentElement).backgroundColor;
                     }
+                    // Stability gate: a sampled colour must persist for at least
+                    // STABILITY_MS before we send it to Swift. Transient page-mount
+                    // states (a brief dark flash before the React/Vue tree applies
+                    // the user's theme CSS) get suppressed entirely; legitimate
+                    // theme changes propagate after the short delay.
+                    const STABILITY_MS = 700;
+                    let pendingColor = null;
+                    let pendingTimer = null;
                     function report() {
                         const bg = effectiveBackground();
-                        if (bg && bg !== lastReported) {
-                            lastReported = bg;
-                            window.webkit.messageHandlers.hermesTheme.postMessage(bg);
-                        }
+                        if (!bg) return;
+                        if (bg === lastReported) return;
+                        if (bg === pendingColor) return;
+                        pendingColor = bg;
+                        clearTimeout(pendingTimer);
+                        pendingTimer = setTimeout(function() {
+                            // Only fire if the colour we queued is still the
+                            // current effective background — a flicker resets
+                            // pendingColor and re-arms the timer.
+                            if (pendingColor === bg && bg !== lastReported) {
+                                lastReported = bg;
+                                window.webkit.messageHandlers.hermesTheme.postMessage(bg);
+                            }
+                        }, STABILITY_MS);
                     }
                     const observer = new MutationObserver(() => requestAnimationFrame(report));
                     function start() {
