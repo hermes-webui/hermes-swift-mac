@@ -412,26 +412,28 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.navigationDelegate = self
         webView.allowsMagnification = true
 
-        // Fix #23: prevent white flash on startup in dark mode (FOUC).
-        // Set the WKWebView background to match the system window background
-        // before the first paint — otherwise the WebView renders white while
-        // the dark theme is still loading from the server.
+        // The pre-paint background colour. Cached from the last theme report
+        // so a Cmd+R or new-tab opens with the correct theme rather than
+        // flashing dark and waiting for the bridge to re-detect light.
+        // Falls back to #1a1a1a (dark) when no cache exists — that matches the
+        // safe default for first-ever launches.
+        let prePaintColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
+            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        let prePaintHex = Self.hexString(for: prePaintColor)
+
+        // Fix #23 / #52: prevent white-or-wrong-colour flash on startup. The
+        // overscroll gutter and the body/html pre-paint background both need
+        // to match what the page will eventually render — using the cached
+        // colour avoids the dark flash that the old hardcoded #1a1a1a caused
+        // on light themes during reload / new tab.
         if #available(macOS 12.0, *) {
-            // Fix #52: match the pre-paint dark background so the overscroll gutter
-            // is dark too — not white, regardless of system colour scheme.
-            webView.underPageBackgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+            webView.underPageBackgroundColor = prePaintColor
         }
-        // Fix #52: inject a documentStart script that always sets the document
-        // background to match our pre-paint NSWindow dark background (#1a1a1a),
-        // regardless of colour scheme. This eliminates any FOUC during the HTTP
-        // round-trip — even if the window becomes visible early, both the native
-        // frame and the WebView show the same dark colour.
-        // Once the app's actual CSS loads, it overrides this with the correct theme.
         let darkModeScript = WKUserScript(
             source: """
                 (function() {
-                    document.documentElement.style.background = '#1a1a1a';
-                    if (document.body) { document.body.style.background = '#1a1a1a'; }
+                    document.documentElement.style.background = '\(prePaintHex)';
+                    if (document.body) { document.body.style.background = '\(prePaintHex)'; }
                 })();
                 """,
             injectionTime: .atDocumentStart,
@@ -763,6 +765,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // WCAG-ish relative luminance (linear approximation, good enough to bisect).
         let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
         return luminance < 0.5
+    }
+
+    /// Format an NSColor as a #RRGGBB hex string suitable for embedding in a
+    /// CSS string. Forces sRGB so the components round-trip cleanly regardless
+    /// of the colour space the receiver was constructed in.
+    static func hexString(for color: NSColor) -> String {
+        let sRGB = color.usingColorSpace(.sRGB) ?? color
+        let r = Int(round(max(0, min(1, Double(sRGB.redComponent))) * 255))
+        let g = Int(round(max(0, min(1, Double(sRGB.greenComponent))) * 255))
+        let b = Int(round(max(0, min(1, Double(sRGB.blueComponent))) * 255))
+        return String(format: "#%02X%02X%02X", r, g, b)
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
