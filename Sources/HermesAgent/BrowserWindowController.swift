@@ -979,7 +979,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // covers the case where the page loaded in a window already in a tab group,
         // or where a route change re-rendered the body without firing the
         // tabbedWindows KVO observer.
-        let tabbed = window?.tab.tabGroup?.isTabBarVisible ?? false
+        let tabbed = window?.tabGroup?.isTabBarVisible ?? false
         updateAppTitlebarClass(tabbed: tabbed)
     }
 
@@ -1169,7 +1169,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // raw tabbedWindows.count > 1 check missed the latter, leaving the AppKit
         // bar to clip web content when a user manually requested it). macOS 10.13+,
         // we target 12+.
-        let tabBarVisible = win.tab.tabGroup?.isTabBarVisible ?? false
+        let tabBarVisible = win.tabGroup?.isTabBarVisible ?? false
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
         // Fix #68: when the find bar is open, reserve its 36 px at the top.
         // Without this, recomputes triggered by windowDidResize, fullscreen
