@@ -1141,9 +1141,18 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let groupCount = win.tabbedWindows?.count ?? 1
         let tabBarVisible = groupCount > 1
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
+        // Fix #68: when the find bar is open, reserve its 36 px at the top.
+        // Without this, recomputes triggered by windowDidResize, fullscreen
+        // transitions, or the tabbedWindows KVO observer would grow webView
+        // back over the find bar — hiding the search field while the bar
+        // remained in the view hierarchy. The find bar's own frame is anchored
+        // to contentLayoutRect.maxY - barHeight, so it follows the title-bar
+        // zone correctly across all these transitions; only webView height
+        // needs the carve-out here.
+        let findBarHeight: CGFloat = findBarVisible ? 36 : 0
         let topY: CGFloat = tabBarVisible
-            ? win.contentLayoutRect.maxY
-            : contentView.bounds.height
+            ? win.contentLayoutRect.maxY - findBarHeight
+            : contentView.bounds.height - findBarHeight
         let newHeight = max(0, topY - statusBarHeight)
         webView.frame = NSRect(
             x: 0, y: statusBarHeight,
