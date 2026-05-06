@@ -1,6 +1,6 @@
 # Changelog
 
-## [v1.6.2] — TBD
+## [v1.6.2] — 2026-05-06
 
 ### Fixed
 - **Tab-bar / title-bar strip flashes white in multi-tab sessions, and stays stuck after closing the offending tab — bug #70** — v1.6.1's theme bridge sampled the page background by walking `document.elementsFromPoint(x, y)` at three fixed viewport coordinates. Any opaque modal, lightbox, settings panel, file-tree overlay, or image preview that covered any of the three sample points and stayed visible past the 2.5 s stability gate would make the bridge fire the *overlay's* colour. With multi-tab, that one tab's overlay-derived colour was then propagated to every other window's chrome, producing the symptom Cygnus filed in #70 (white tab strip persisting until the user could refresh). The pixel-sampling architecture is fundamentally fragile against legitimate page overlays. Fix: prefer the WebUI's own `<meta name="theme-color" id="hermes-theme-color">` tag (introduced in hermes-webui v0.51.x+) as the single source of truth — it's page-controlled, overlay-resistant, and updated by `boot.js` whenever the user toggles theme or skin. The bridge falls back to the original pixel-sampling path when the meta tag is absent (older WebUI servers, raw error pages), so behavior is unchanged for self-hosters who haven't updated yet. Also adds a `MutationObserver` on the meta tag's `content` attribute so toggles propagate without waiting for the 2 s poll tick. Closes #70.
