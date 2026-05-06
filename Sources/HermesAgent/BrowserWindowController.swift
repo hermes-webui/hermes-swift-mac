@@ -375,7 +375,31 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                         }
                         return null;
                     }
+                    // Prefer the WebUI's own theme-color meta tag when present.
+                    // hermes-webui v0.51.x+ exposes a <meta id="hermes-theme-color">
+                    // updated by boot.js whenever theme/skin changes; this is the
+                    // authoritative source of truth and is overlay-resistant
+                    // (modals/lightboxes can't poison it). When the tag is absent
+                    // (older server, raw page, error route) we fall back to pixel
+                    // sampling at three viewport interior points.
+                    function themeColorMetaBackground() {
+                        const meta = document.getElementById('hermes-theme-color');
+                        if (!meta) return null;
+                        const content = (meta.getAttribute('content') || '').trim();
+                        if (!content) return null;
+                        // Defensive: only trust values that match the forms our
+                        // Swift parseCSSColor() accepts (#RGB / #RRGGBB / rgb()
+                        // / rgba()). Anything else (e.g. an unresolved
+                        // `var(--bg)` from a future WebUI bug, an unknown CSS
+                        // colour name) falls through to pixel-sampling rather
+                        // than poisoning lastReportedHex with garbage and
+                        // suppressing every subsequent valid sample.
+                        if (!/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$|^rgba?\\(/.test(content)) return null;
+                        return content;
+                    }
                     function effectiveBackground() {
+                        const meta = themeColorMetaBackground();
+                        if (meta) return meta;
                         const w = window.innerWidth || 1280;
                         const h = window.innerHeight || 800;
                         // Sample a few interior points so a single oddly-coloured
@@ -447,6 +471,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                             observer.observe(document.body, {
                                 attributes: true,
                                 attributeFilter: ['class', 'data-theme', 'style', 'data-mode']
+                            });
+                        }
+                        // Watch the theme-color meta tag's content attribute too
+                        // — this is the new authoritative signal in v0.51.x+.
+                        // boot.js updates it on every theme/skin change, so we
+                        // catch toggles without waiting for the 2s poll tick.
+                        const themeMeta = document.getElementById('hermes-theme-color');
+                        if (themeMeta) {
+                            observer.observe(themeMeta, {
+                                attributes: true,
+                                attributeFilter: ['content']
                             });
                         }
                         // Belt-and-suspenders: poll every 2s. Web apps that toggle
