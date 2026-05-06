@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.6.4] — TBD
+
+### Fixed
+- **Sequential screenshot pastes drop all but the first — bug #1733** — the Mac app's paste handler hardcoded the file name `screenshot.png` for every paste. The WebUI's `addFiles()` helper (`static/ui.js`) dedupes the composer's `pendingFiles` array by `f.name`, so when a user takes multiple screenshots in succession and pastes them one at a time (Cmd+Shift+4 → Cmd+V → Cmd+Shift+4 → Cmd+V → …), only the first pasted image survived in the composer tray. The same workflow worked correctly in a regular browser because `static/boot.js`'s paste path already suffixes the timestamp into the filename. Mirrored that scheme on the Swift side: `screenshot-<msTimestamp>-<sequence>.png` where `<sequence>` is a monotonic per-process counter that disambiguates pastes that land within the same millisecond. Each paste now appears as its own chip in the composer tray and uploads alongside the others. Closes nesquena/hermes-webui#1733.
+
 ## [v1.6.3] — 2026-05-06
 
 ### Fixed

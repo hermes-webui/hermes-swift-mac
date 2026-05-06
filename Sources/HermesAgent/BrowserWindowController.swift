@@ -675,6 +675,14 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     // MARK: - Paste
 
+    /// Monotonically increasing counter used to disambiguate paste filenames
+    /// when multiple screenshots are pasted in rapid succession. Combined with
+    /// a millisecond timestamp this guarantees the WebUI's `addFiles()` keying
+    /// (which dedupes by `f.name`) treats each paste as a distinct file even
+    /// when two pastes land in the same millisecond. Reset behaviour is not
+    /// needed: `Int` overflow takes ~292 million years at 1 paste per nanosecond.
+    private static var pasteSequence: UInt64 = 0
+
     func handlePaste() {
         let pb = NSPasteboard.general
 
@@ -687,7 +695,22 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
             let base64 = png.base64EncodedString()
 
-            // Safe: base64 encoding only produces [A-Za-z0-9+/=], no JS-special chars
+            // Each paste needs a unique filename — the WebUI's addFiles() helper
+            // (static/ui.js) dedupes the pendingFiles array by `f.name`, so a
+            // hardcoded "screenshot.png" silently drops the second and later
+            // pastes when a user takes multiple screenshots in sequence and
+            // pastes them one at a time. Combine a millisecond timestamp with a
+            // monotonic counter so even back-to-back pastes within the same ms
+            // get distinct names. The browser-side paste handler in
+            // static/boot.js already uses an analogous suffix scheme; this
+            // mirrors it for the Mac native paste path.
+            Self.pasteSequence &+= 1
+            let pasteTs = Int(Date().timeIntervalSince1970 * 1000)
+            let uniqueName = "screenshot-\(pasteTs)-\(Self.pasteSequence).png"
+
+            // Safe: base64 encoding only produces [A-Za-z0-9+/=], no JS-special chars.
+            // The unique filename only contains digits and a hyphen, all
+            // JS-string-safe — no escaping concerns when interpolated below.
             // Try multiple strategies to get the image into the web app
             let js = """
                 (function() {
@@ -696,7 +719,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                     const bytes = new Uint8Array(binary.length);
                     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                     const blob = new Blob([bytes], { type: 'image/png' });
-                    const file = new File([blob], 'screenshot.png', { type: 'image/png', lastModified: Date.now() });
+                    const file = new File([blob], '\(uniqueName)', { type: 'image/png', lastModified: Date.now() });
 
                     // Strategy 1: fire paste event on active element with clipboardData
                     const active = document.activeElement || document.body;
