@@ -931,12 +931,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         // Theme bridge: web UI reports its effective background colour.
-        // Propagate BOTH the appearance (controls AppKit chrome variants) AND
-        // the actual NSColor (used as window.backgroundColor so the tab-bar
-        // strip blends with the page instead of showing the hardcoded #1a1a1a
-        // through). Without the second piece, the tab bar zone stays dark even
-        // with .aqua appearance because window.backgroundColor was hardcoded
-        // dark in init() to prevent the white-flash-on-launch (fix #52).
+        // Propagate BOTH the appearance (drives AppKit chrome variants — the
+        // .aqua/.darkAqua choice picks the title/tab bar's tonal materials)
+        // AND the actual NSColor (used to tint the SSH footer exactly so the
+        // bottom edge reads as a continuation of the page; also cached as
+        // AppDelegate.currentBackgroundColor for the WKWebView pre-paint
+        // backstop on new tabs and reloads). The native title/tab bar zone
+        // is intentionally NOT painted with this colour — doing so swamped
+        // the tab bar's translucent material and erased the dividers
+        // between tabs (regression fixed in v1.6.3).
         if message.name == "hermesTheme", let css = message.body as? String {
             guard let rgb = Self.parseCSSColor(css) else { return }
             let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b

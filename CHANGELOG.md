@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.6.3] — 2026-05-06
+
+### Fixed
+- **Native AppKit tab dividers restored** — v1.6.0–v1.6.2 painted `NSWindow.backgroundColor` with the page's exact RGB so the title-bar zone matched the page edge seamlessly. With native tabs visible, that flat fill swamped the tab bar's translucent material — the dividers between tabs disappeared and the active tab no longer read as elevated. Fix: stop overriding `window.backgroundColor`. Let it fall back to AppKit's default for the current `NSAppearance` so the native tab bar paints with its system tonal materials. The SSH footer still tints with the exact page RGB (it has no native treatment to preserve). The WKWebView's `underPageBackgroundColor` and the documentStart background-paint script still backstop new-tab / reload paint with the cached theme, so the no-flicker behaviour from v1.6.1 (fix #52) is preserved.
+- **Cross-tab theme/skin propagation** — Changing the theme in one tab did not re-render sibling tabs — each WKWebView held its own rendered theme until manually reloaded, so users could see two tabs in different themes simultaneously. hermes-webui's `boot.js` does not listen for `storage` events (verified May 2026), so a shared `WKWebsiteDataStore` alone wasn't enough. Fix: when `AppDelegate.updateAppearance` fires (a tab's bridge reported a stable new colour passing the 2.5 s STABILITY_MS gate), broadcast a small JS snippet to every browser window's WKWebView calling `_applyTheme(localStorage.getItem('hermes-theme'))` and `_applySkin(...)` plus the picker-sync helpers. Those functions are top-level in `boot.js` (loaded as a regular `<script>`, not a module), making them globals on `window` and reachable from `evaluateJavaScript`. localStorage is shared across same-origin WKWebViews via the default data store, so each sibling tab reads the values the source tab just wrote via `_pickTheme`/`_pickSkin`. Idempotent on the source tab. `typeof === 'function'` guard handles tabs still mid-load. The cross-tab sync directly references `_applyTheme`/`_applySkin`/`_syncThemePicker`/`_syncSkinPicker` from hermes-webui's `boot.js` — if any of those are renamed or converted to ES module locals, the Mac shim breaks silently. Long-term shape: a stable `window.hermes.setTheme(theme, skin)` API on the web side.
+
 ## [v1.6.2] — 2026-05-06
 
 ### Fixed
