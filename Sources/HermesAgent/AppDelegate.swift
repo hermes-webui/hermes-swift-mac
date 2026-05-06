@@ -51,15 +51,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// (matches the hardcoded #1a1a1a pre-paint background).
     var currentAppearance: NSAppearance? = NSAppearance(named: .darkAqua)
 
-    /// The window background colour matching the current web-UI theme. Used as
-    /// `NSWindow.backgroundColor` on browser windows so the tab-bar strip
-    /// blends with the page instead of showing through the hardcoded
-    /// pre-paint #1a1a1a. Defaults to that #1a1a1a so the very first window
-    /// looks right before the bridge fires.
+    /// The page-background colour the web UI most recently reported. Used to
+    /// tint the SSH footer (which has no native treatment) and as the WKWebView
+    /// underPageBackgroundColor / pre-paint backstop on new tabs and reloads.
+    /// We deliberately do NOT push this into `NSWindow.backgroundColor` —
+    /// doing so swamps the tab bar's native tonal contrast and produces a
+    /// flat, borderless tab strip. The window's appearance (.aqua/.darkAqua)
+    /// drives native chrome instead.
     var currentBackgroundColor: NSColor =
         NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
 
-    /// Apply a new appearance + window background colour to every Hermes window.
+    /// Apply a new appearance + page-background colour to every Hermes window.
     /// Called by the BrowserWindowController theme bridge when the web UI
     /// reports a new background.
     func updateAppearance(_ appearance: NSAppearance?, backgroundColor: NSColor? = nil) {
@@ -71,10 +73,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for browser in browserWindows {
             if appearanceChanged { browser.window?.appearance = appearance }
             if let bg = backgroundColor {
-                browser.window?.backgroundColor = bg
-                // Push the colour through to the SSH footer so it matches the
-                // tab-bar strip (which paints with window.backgroundColor) one
-                // to one — same RGB for every chrome surface.
+                // SSH footer is the only chrome surface that takes the exact
+                // page RGB — it has no native treatment, so matching the page
+                // edge precisely reads as "page extends to the bottom of the
+                // window." The native title/tab bar zone is left to AppKit
+                // so its tonal materials and tab separators stay visible.
                 browser.applyChromeBackgroundColor(bg)
             }
         }
@@ -83,9 +86,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             errorWindow?.window?.appearance = appearance
             splashWindow?.window?.appearance = appearance
         }
+        // Cross-tab theme sync: when one tab's bridge fires, push the
+        // hermes-webui theme + skin from shared localStorage into every other
+        // browser window's WKWebView so all tabs in a group render the same
+        // theme. Without this, switching the theme in tab A leaves tabs B/C
+        // visually stuck on whatever theme they last loaded with — until the
+        // user manually reloads them. hermes-webui's boot.js doesn't listen
+        // for `storage` events (verified May 2026), so we drive the re-apply
+        // explicitly. `_applyTheme` and `_applySkin` are top-level functions
+        // in boot.js (loaded as a regular script, not a module), which makes
+        // them globals on `window` and reachable from `evaluateJavaScript`.
+        // Idempotent — re-applying the same theme is a no-op repaint.
+        if bgChanged { broadcastWebUIThemeSync() }
         // Persist so next launch + new tabs/windows can open with the last-seen
         // theme instead of flashing dark while the bridge re-checks.
         if bgChanged { persistCurrentTheme() }
+    }
+
+    /// Tell every browser window's WKWebView to re-apply theme + skin from
+    /// the (shared) localStorage. Called from updateAppearance when the
+    /// background colour changes, so all open tabs converge on whichever
+    /// tab's bridge fired most recently.
+    private func broadcastWebUIThemeSync() {
+        let script = """
+            (function() {
+                try {
+                    if (typeof _applyTheme === 'function') {
+                        _applyTheme(localStorage.getItem('hermes-theme') || 'dark');
+                    }
+                    if (typeof _applySkin === 'function') {
+                        _applySkin(localStorage.getItem('hermes-skin') || 'default');
+                    }
+                    if (typeof _syncThemePicker === 'function') {
+                        _syncThemePicker(localStorage.getItem('hermes-theme') || 'dark');
+                    }
+                    if (typeof _syncSkinPicker === 'function') {
+                        _syncSkinPicker(localStorage.getItem('hermes-skin') || 'default');
+                    }
+                } catch (e) { /* boot.js not yet loaded; next page load picks up the value */ }
+            })();
+            """
+        for browser in browserWindows {
+            browser.webViewForZoom?.evaluateJavaScript(script, completionHandler: nil)
+        }
     }
 
     // MARK: - Theme cache (UserDefaults)

@@ -161,17 +161,16 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             defer: false
         )
         window.title = title
-        // Fix #23 + #52: set native window background to a dark colour before
-        // content loads. Using a literal dark value (not windowBackgroundColor)
-        // ensures the gap between window-visible and first-paint is dark in
-        // *all* colour schemes — windowBackgroundColor is white in light mode.
-        // Multi-window theme tracking: if AppDelegate already knows the current
-        // theme background colour (a sibling browser window has reported), use
-        // that so this new window/tab opens with the right colour and the tab
-        // bar strip blends correctly. Falls back to the dark pre-paint colour
-        // for the very first window.
-        window.backgroundColor = (NSApp.delegate as? AppDelegate)?.currentBackgroundColor
-            ?? NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0)
+        // We deliberately leave `window.backgroundColor` at AppKit's default
+        // for this appearance. Earlier versions painted it with the exact
+        // page RGB so the title bar zone matched the page edge seamlessly,
+        // but with native tabs visible the tab bar's translucent material
+        // blended into that flat fill and lost its tonal contrast — the tab
+        // dividers became invisible. The new-tab pre-paint colour (the
+        // gap before WKWebView's first paint) is handled by
+        // `webView.underPageBackgroundColor` and the documentStart
+        // background-paint script, both keyed to the cached theme; setting
+        // window.backgroundColor here would only affect the tab strip.
         super.init(window: window)
 
         // Fix #57: extend web content under the native title bar.
@@ -608,11 +607,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
             // Plain NSView with an explicit colour — we want the SSH footer to
-            // match the page background EXACTLY, sharing the same RGB as the
-            // tab-bar strip (which shows window.backgroundColor through). An
-            // NSVisualEffectView would introduce vibrancy that tints the colour
-            // off, breaking the visual seam. The bar stays in sync via
-            // AppDelegate.updateAppearance → applyChromeBackgroundColor.
+            // match the page background EXACTLY, so the bottom edge reads as a
+            // continuation of the page. An NSVisualEffectView would introduce
+            // vibrancy that tints the colour off, breaking the visual seam.
+            // The bar stays in sync via AppDelegate.updateAppearance →
+            // applyChromeBackgroundColor.
             let bar = NSView(
                 frame: NSRect(x: 0, y: 0, width: bounds.width, height: statusBarHeight))
             bar.autoresizingMask = [.width]
@@ -1248,9 +1247,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     }
 
     /// Apply a new chrome background colour. Called by AppDelegate.updateAppearance
-    /// when the theme bridge reports a new web-UI background — keeps the SSH
-    /// status bar in lock-step with window.backgroundColor (which the tab-bar
-    /// strip shows through), so all three surfaces share the same exact RGB.
+    /// when the theme bridge reports a new web-UI background. Tints only the
+    /// SSH footer (which has no native AppKit treatment to preserve) with the
+    /// exact page RGB, so the bottom edge of the window reads as a continuation
+    /// of the page. The native title/tab bar is intentionally left alone so
+    /// AppKit can paint its own tonal materials and tab dividers.
     func applyChromeBackgroundColor(_ color: NSColor) {
         statusBar?.layer?.backgroundColor = color.cgColor
         // Re-resolve the separator colour in the new appearance so its tone
