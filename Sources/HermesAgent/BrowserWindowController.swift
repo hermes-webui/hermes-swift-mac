@@ -680,7 +680,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// a millisecond timestamp this guarantees the WebUI's `addFiles()` keying
     /// (which dedupes by `f.name`) treats each paste as a distinct file even
     /// when two pastes land in the same millisecond. Reset behaviour is not
-    /// needed: `Int` overflow takes ~292 million years at 1 paste per nanosecond.
+    /// needed: `UInt64` overflow takes ~292 million years at 1 paste per nanosecond.
     private static var pasteSequence: UInt64 = 0
 
     func handlePaste() {
