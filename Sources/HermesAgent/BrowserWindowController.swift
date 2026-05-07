@@ -110,6 +110,12 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     private var findBarVisible = false
     /// Fix #64: drag overlay view — kept as a property so it can be resized on window resize.
     private var titleBarDragView: TitleBarDragView?
+    /// Always-visible "+" button in the title-bar drag zone, so single-window
+    /// users can discover tab support without memorizing Cmd+T (issue #75).
+    /// Hidden once AppKit's native tab bar appears (≥2 tabs in the group, or
+    /// the user explicitly chose Window → Show Tab Bar) so we don't double-up
+    /// with AppKit's own "+" button. Toggled by `updateAppTitlebarClass(tabbed:)`.
+    private var newTabButton: NSButton?
     /// The UserDefaults autosave name for the main window frame.
     /// Used for both windowFrameAutosaveName and the derived "NSWindow Frame <name>" key.
     private static let windowAutosaveName = "HermesMainWindow"
@@ -604,6 +610,41 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         contentView.addSubview(dragView)
         titleBarDragView = dragView
 
+        // Always-visible "+" button in the title-bar drag zone (issue #75) —
+        // gives single-window users a discoverable affordance for tabs
+        // without relying on Cmd+T muscle-memory. Once AppKit's own tab bar
+        // becomes visible (≥2 tabs in the group), updateAppTitlebarClass(tabbed:)
+        // hides this button so we don't double up with AppKit's native "+".
+        // Positioned at the right edge of the drag zone, vertically centered.
+        // The SF Symbol "plus" image renders correctly in both .aqua and
+        // .darkAqua and follows the system tint without manual repainting.
+        // The SF Symbol "plus" is shipped with macOS 11+ (we target 12+) so
+        // it always resolves. Defensive `?? NSImage()` keeps the type
+        // signature happy without ever firing in practice.
+        let plusImage = NSImage(systemSymbolName: "plus",
+                                accessibilityDescription: "New Tab")
+        let plusBtn = NSButton(image: plusImage ?? NSImage(),
+                               target: nil,
+                               action: #selector(AppDelegate.newBrowserTab))
+        plusBtn.bezelStyle = .recessed
+        plusBtn.isBordered = false
+        plusBtn.toolTip = "New Tab (\u{2318}T)"
+        plusBtn.translatesAutoresizingMaskIntoConstraints = false
+        plusBtn.setAccessibilityLabel("New Tab")
+        // target: nil routes the click through the responder chain — AppKit
+        // walks firstResponder → window → app delegate, finding our @objc
+        // newBrowserTab on AppDelegate. Avoids holding a hard reference to
+        // NSApp.delegate and works correctly even if multiple AppDelegate
+        // instances ever existed (they don't, but the pattern is safer).
+        dragView.addSubview(plusBtn)
+        NSLayoutConstraint.activate([
+            plusBtn.trailingAnchor.constraint(equalTo: dragView.trailingAnchor, constant: -12),
+            plusBtn.centerYAnchor.constraint(equalTo: dragView.centerYAnchor),
+            plusBtn.widthAnchor.constraint(equalToConstant: 24),
+            plusBtn.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        newTabButton = plusBtn
+
         // Only add status bar in SSH mode
         if connectionMode == "ssh" {
             // Plain NSView with an explicit colour — we want the SSH footer to
@@ -965,9 +1006,15 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // between tabs (regression fixed in v1.6.3).
         if message.name == "hermesTheme", let css = message.body as? String {
             guard let rgb = Self.parseCSSColor(css) else { return }
+            // Default to dark unless the page is genuinely near-white
+            // (issue #70). The threshold lives in
+            // AppDelegate.appearanceForLuminance so the rule is shared with
+            // the cache-load path. Murky-middle samples (transient overlays,
+            // partial mount paints) stay on the dark appearance instead of
+            // flipping the chrome to .aqua and giving the user a flash of
+            // light material.
             let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
-            let isDark = luminance < 0.5
-            let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            let appearance = AppDelegate.appearanceForLuminance(luminance)
             // sRGB so the components round-trip cleanly to UserDefaults
             // (the calibrated-RGB constructor would shift values slightly).
             let bgColor = NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1.0)
@@ -1146,6 +1193,23 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             return
         }
 
+        // Defense-in-depth (#76): API endpoints should never become full-page
+        // navigations. The WebUI's JS treats /api/* as fetch targets only, and
+        // every API error response uses the JSON shape `{"error": "..."}` —
+        // if a navigation lands on an API URL (e.g., during a post-update
+        // restart race where `location.reload()` from `_waitForServerThenReload()`
+        // intercepts a 404 from the partially-rebuilt route table), the
+        // WKWebView would render the JSON body as the entire page. Cancelling
+        // here keeps the previous page state visible and gives the user a
+        // chance to retry the action. Companion WebUI-side fix at
+        // nesquena/hermes-webui#1835 locks down the home route to never
+        // return JSON; this Mac-side guard catches every other class of
+        // accidental API navigation regardless of WebUI state.
+        if url.path.hasPrefix("/api/") {
+            decisionHandler(.cancel)
+            return
+        }
+
         let scheme = url.scheme?.lowercased() ?? ""
 
         // Block file:// entirely
@@ -1264,6 +1328,11 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
             "if (document.body) document.body.classList.\(action)('hermes-mac-tabbed');",
             completionHandler: nil
         )
+        // Issue #75: hide our "+" button when AppKit's native tab bar is
+        // visible (it provides its own "+"). When the tab bar is hidden
+        // (single-window state), our button is the only discoverable
+        // affordance for opening a new tab, so it stays visible.
+        newTabButton?.isHidden = tabbed
     }
 
     func windowDidResize(_ notification: Notification) {

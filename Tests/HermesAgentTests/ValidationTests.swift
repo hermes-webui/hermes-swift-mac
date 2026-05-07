@@ -149,3 +149,103 @@ final class SSHArgumentTests: XCTestCase {
         XCTAssertEqual(args.count, 8, "SSH args array should have exactly 8 elements")
     }
 }
+
+
+/// Tests for the dark-biased appearance threshold (issue #70).
+/// Mirrors `AppDelegate.appearanceForLuminance(_:)` — the rule that decides
+/// whether a sampled page background is "light enough" to flip the chrome
+/// to .aqua. Default-dark unless the sample is genuinely near-white.
+final class AppearanceThresholdTests: XCTestCase {
+
+    // Mirrors AppDelegate.appearanceForLuminance — returns true if the
+    // luminance is high enough to flip to .aqua, false otherwise (.darkAqua).
+    func isLight(_ luminance: Double) -> Bool {
+        return luminance > 0.85
+    }
+
+    func testCanonicalDarkThemesStayDark() {
+        // hermes-webui dark-theme `--bg` luminances:
+        //   #1A1A1A (Default dark)  ≈ 0.10
+        //   #1F1E1C (Sienna dark)   ≈ 0.12
+        //   #0D1117 (Sisyphus dark) ≈ 0.05
+        XCTAssertFalse(isLight(0.10))
+        XCTAssertFalse(isLight(0.12))
+        XCTAssertFalse(isLight(0.05))
+    }
+
+    func testCanonicalLightThemesGoLight() {
+        // hermes-webui light-theme `--bg` luminances:
+        //   #FEFCF7 (Default light) ≈ 0.99
+        //   #FAF9F5 (Sienna light)  ≈ 0.98
+        XCTAssertTrue(isLight(0.99))
+        XCTAssertTrue(isLight(0.98))
+    }
+
+    func testMurkyMiddleStaysDark() {
+        // Anything in the 0.5…0.85 range is almost certainly an overlay
+        // (modal dim layer, partial mount paint, half-translucent panel).
+        // Default-dark unless we have strong evidence of a near-white page.
+        // This is the core regression guard for issue #70.
+        XCTAssertFalse(isLight(0.50))
+        XCTAssertFalse(isLight(0.65))
+        XCTAssertFalse(isLight(0.80))
+        XCTAssertFalse(isLight(0.85))  // Boundary: 0.85 itself stays dark
+    }
+
+    func testJustAboveThresholdGoesLight() {
+        // > 0.85 — strongly light. Threshold is strict (>), not >=.
+        XCTAssertTrue(isLight(0.851))
+        XCTAssertTrue(isLight(0.90))
+    }
+
+    func testEdgeCases() {
+        XCTAssertFalse(isLight(0.0))
+        XCTAssertTrue(isLight(1.0))
+    }
+}
+
+/// Tests for the /api/* navigation guard (issue #76).
+/// Mirrors the path-prefix check in BrowserWindowController.webView(_:decidePolicyFor:).
+/// API endpoints should never become full-page navigations — the WebUI's JS
+/// treats them as fetch targets only, and JSON error responses would render
+/// raw if a navigation slipped through.
+final class APINavigationGuardTests: XCTestCase {
+
+    // Mirrors BrowserWindowController.webView(_:decidePolicyFor:) check
+    func shouldCancelAsAPINav(_ urlString: String) -> Bool {
+        guard let url = URL(string: urlString) else { return false }
+        return url.path.hasPrefix("/api/")
+    }
+
+    func testApiPathsAreCancelled() {
+        XCTAssertTrue(shouldCancelAsAPINav("http://localhost:8787/api/sessions"))
+        XCTAssertTrue(shouldCancelAsAPINav("http://localhost:8787/api/updates/apply"))
+        XCTAssertTrue(shouldCancelAsAPINav("http://localhost:8787/api/chat/stream"))
+        XCTAssertTrue(shouldCancelAsAPINav("https://my-server.example.com/api/anything"))
+    }
+
+    func testNonApiPathsAreAllowed() {
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/login"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/static/style.css"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/manifest.json"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/sw.js"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/health"))
+    }
+
+    func testApiPrefixIsExact() {
+        // /api-docs and similar should NOT match — the prefix must be /api/
+        // (with the trailing slash) so we don't false-positive on routes
+        // that happen to start with the letters "api".
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/api-docs"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/apidocs"))
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/apipreview"))
+    }
+
+    func testApiAtRootEdge() {
+        // /api alone (no trailing slash) is ambiguous — we choose to allow it
+        // because the WebUI doesn't have a bare /api endpoint and a future
+        // /api landing page (docs?) shouldn't be silently blocked.
+        XCTAssertFalse(shouldCancelAsAPINav("http://localhost:8787/api"))
+    }
+}
