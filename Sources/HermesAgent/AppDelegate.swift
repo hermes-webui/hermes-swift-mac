@@ -160,10 +160,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // produce a transparent or oversaturated chrome colour.
         guard (0.0...1.0).contains(r), (0.0...1.0).contains(g), (0.0...1.0).contains(b)
         else { return }
-        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        let isDark = luminance < 0.5
-        currentAppearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        // Default to dark unless the cached sample is genuinely near-white
+        // — guards against a poisoned cache (e.g. an overlay sample stuck at
+        // off-white) flipping the chrome to .aqua on the next launch and
+        // showing the user a flash of light material before the bridge can
+        // re-sample. See `appearanceForLuminance(_:)` for the threshold.
+        currentAppearance = Self.appearanceForLuminance(0.2126 * r + 0.7152 * g + 0.0722 * b)
         currentBackgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    /// Map a luminance value (0…1) to an NSAppearance, biased to dark
+    /// (issue #70). The threshold is intentionally high (0.85) so the chrome
+    /// only flips to .aqua when the page is genuinely near-white: the
+    /// canonical light-theme `--bg` values for hermes-webui are #FEFCF7
+    /// (Default light, luminance ~0.99) and #FAF9F5 (Sienna light, ~0.98) —
+    /// well above the threshold. Dark-theme `--bg` values are around
+    /// #1A1A1A (~0.10) and #1F1E1C (~0.12) — well below. Anything in the
+    /// 0.5…0.85 murky middle is almost certainly an overlay, modal, or
+    /// transient mount paint sample and should not flip the chrome.
+    /// Used by both `loadCachedTheme()` and the live bridge handler so
+    /// the rule lives in exactly one place.
+    static func appearanceForLuminance(_ luminance: Double) -> NSAppearance? {
+        // > 0.85 = near-white = light theme. Otherwise stay dark.
+        // The threshold leaves a safety margin even for unusually bright
+        // dark-theme accent panels and unusually dingy light-theme cards.
+        return NSAppearance(named: luminance > 0.85 ? .aqua : .darkAqua)
     }
 
     /// Write currentBackgroundColor + a fresh timestamp to UserDefaults.
@@ -646,6 +667,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
+        appMenu.addItem(.separator())
+
+        // Standard macOS application menu group — Services / Hide / Hide Others / Show All.
+        // AppKit auto-populates these only when the menu is built from a MainMenu.xib;
+        // a hand-rolled NSMenu (this code path) gets only what we append. Without these
+        // items, Cmd+H silently does nothing and the app feels less native than its
+        // peers (Obsidian, Slack, etc). Apple HIG ordering: Services, separator, Hide,
+        // Hide Others, Show All, separator, Quit (issue #77).
+        let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "Services")
+        servicesItem.submenu = servicesMenu
+        appMenu.addItem(servicesItem)
+        NSApp.servicesMenu = servicesMenu
+
+        appMenu.addItem(.separator())
+
+        appMenu.addItem(NSMenuItem(
+            title: "Hide \(appTitle)",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h"))
+        let hideOthersItem = NSMenuItem(
+            title: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        appMenu.addItem(
+            withTitle: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: "")
+
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Quit \(appTitle)", action: #selector(NSApplication.terminate(_:)),
