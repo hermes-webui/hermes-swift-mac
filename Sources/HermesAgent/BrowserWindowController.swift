@@ -77,6 +77,50 @@ private class TitleBarDragView: NSView {
 
 class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
+    /// WKWebView-only compatibility guard for the upstream transcript-virtualization
+    /// retry loop (hermes-webui PR #6668). The affected WebUI scheduler resets its
+    /// retry budget whenever WebKit's measured virtual window changes, so alternating
+    /// measurements can schedule layout work forever on long conversations.
+    ///
+    /// WebUI already provides `_virtualizeTranscript === false` as its supported
+    /// non-virtualized path. This document-start accessor remembers the server's
+    /// requested setting but reports it as disabled while the loaded scheduler still
+    /// contains the known bad reset. Once the upstream fix is deployed, the reset is
+    /// absent and the server setting takes effect automatically. Remove this shim once
+    /// supported WebUI versions universally include that fix.
+    static let longConversationWebKitCompatibilityScript = """
+        (function() {
+            const marker = '__hermesMacLongConversationCompatibilityPatch';
+            if (window[marker]) return;
+
+            const functionToString = Function.prototype.toString;
+            let requestedValue = window._virtualizeTranscript === true;
+
+            Object.defineProperty(window, marker, {
+                value: true,
+                configurable: false,
+                enumerable: false
+            });
+            Object.defineProperty(window, '_virtualizeTranscript', {
+                configurable: true,
+                enumerable: true,
+                get: function() {
+                    if (!requestedValue) return false;
+                    const scheduler = window._scheduleMessageVirtualMeasurementRefresh;
+                    if (typeof scheduler !== 'function') return false;
+                    const source = functionToString.call(scheduler);
+                    const compactSource = Array.from(source)
+                        .filter(function(character) { return character.charCodeAt(0) > 32; })
+                        .join('');
+                    return !compactSource.includes('_messageVirtualMeasurementRetryCount=0');
+                },
+                set: function(value) {
+                    requestedValue = value === true;
+                }
+            });
+        })();
+        """
+
     private var webView: HermesWebView!
     private var statusBar: NSView!
 
@@ -265,6 +309,17 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         prefs.setValue(true, forKey: "javaScriptCanAccessClipboard")
         prefs.setValue(true, forKey: "DOMPasteAllowed")
         config.preferences = prefs
+
+        // Install before any page content loads so the WebUI settings bootstrap
+        // cannot enable the affected virtualizer before this client-side guard.
+        // Main-frame-only keeps the override out of embedded documents.
+        let longConversationCompatibilityScript = WKUserScript(
+            source: Self.longConversationWebKitCompatibilityScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(longConversationCompatibilityScript)
+
         let pasteScript = WKUserScript(
             source:
                 "document.addEventListener('paste', function(e) { e.stopImmediatePropagation(); }, true);",
