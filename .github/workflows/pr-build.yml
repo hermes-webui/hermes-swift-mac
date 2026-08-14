@@ -1,0 +1,39 @@
+name: macOS PR Build
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-pr-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve Swift packages
+        run: swift package resolve
+
+      - name: Run unit tests
+        run: swift test
+
+      - name: Build release app
+        run: bash build.sh
+
+      - name: Archive installable app
+        run: ditto -c -k --sequesterRsrc --keepParent "Hermes Agent.app" "Hermes-Agent-pr-${{ github.event.pull_request.number || github.run_number }}.zip"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hermes-Agent-pr-${{ github.event.pull_request.number || github.run_number }}
+          path: Hermes-Agent-pr-${{ github.event.pull_request.number || github.run_number }}.zip
+          if-no-files-found: error
+          retention-days: 14
