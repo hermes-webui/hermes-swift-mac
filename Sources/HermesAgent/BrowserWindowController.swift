@@ -267,18 +267,42 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let nativeShellScript = WKUserScript(
             source: """
                 window.__HERMES_NATIVE_MAC__ = true;
-                try {
-                    const inflightKey = 'hermes-webui-inflight-state';
-                    const inflight = localStorage.getItem(inflightKey);
-                    // A very large replay cache can pin WKWebView's content
-                    // process before the conversation list becomes interactive.
-                    // Avoid immediately reopening that same transcript; the
-                    // canonical conversation remains stored on the server.
-                    if (inflight && inflight.length > 500000) {
-                        localStorage.removeItem(inflightKey);
-                        localStorage.removeItem('hermes-webui-session');
+                const hermesFetch = window.fetch.bind(window);
+                window.fetch = async function(input, init) {
+                    const response = await hermesFetch(input, init);
+                    const url = typeof input === 'string'
+                        ? input
+                        : (input && (input.url || input.href)) || String(input || '');
+                    if (!url.includes('/api/session?') || !url.includes('messages=1')) {
+                        return response;
                     }
-                } catch (_) {}
+                    const copy = response.clone();
+                    try {
+                        const data = await copy.json();
+                        const messages = data && data.session && data.session.messages;
+                        if (!Array.isArray(messages)) return response;
+                        const limit = 50000;
+                        const trim = function(value) {
+                            if (typeof value === 'string' && value.length > limit) {
+                                return value.slice(0, limit)
+                                    + '\\n\\n[Content truncated in the macOS app; open in a browser to view the full value.]';
+                            }
+                            if (Array.isArray(value)) return value.map(trim);
+                            if (value && typeof value === 'object') {
+                                for (const key of Object.keys(value)) value[key] = trim(value[key]);
+                            }
+                            return value;
+                        };
+                        trim(messages);
+                        return new Response(JSON.stringify(data), {
+                            status: response.status,
+                            statusText: response.statusText,
+                            headers: response.headers
+                        });
+                    } catch (_) {
+                        return response;
+                    }
+                };
                 """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
