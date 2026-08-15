@@ -261,53 +261,6 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
 
         let config = WKWebViewConfiguration()
-        // Let hermes-webui identify the native shell without relying on the
-        // OS-specific Safari user-agent string.  WKWebView has a smaller and
-        // slower rendering budget than desktop Safari for large transcripts.
-        let nativeShellScript = WKUserScript(
-            source: """
-                window.__HERMES_NATIVE_MAC__ = true;
-                const hermesFetch = window.fetch.bind(window);
-                window.fetch = async function(input, init) {
-                    const response = await hermesFetch(input, init);
-                    const url = typeof input === 'string'
-                        ? input
-                        : (input && (input.url || input.href)) || String(input || '');
-                    if (!url.includes('/api/session?') || !url.includes('messages=1')) {
-                        return response;
-                    }
-                    const copy = response.clone();
-                    try {
-                        const data = await copy.json();
-                        const messages = data && data.session && data.session.messages;
-                        if (!Array.isArray(messages)) return response;
-                        const limit = 50000;
-                        const trim = function(value) {
-                            if (typeof value === 'string' && value.length > limit) {
-                                return value.slice(0, limit)
-                                    + '\\n\\n[Content truncated in the macOS app; open in a browser to view the full value.]';
-                            }
-                            if (Array.isArray(value)) return value.map(trim);
-                            if (value && typeof value === 'object') {
-                                for (const key of Object.keys(value)) value[key] = trim(value[key]);
-                            }
-                            return value;
-                        };
-                        trim(messages);
-                        return new Response(JSON.stringify(data), {
-                            status: response.status,
-                            statusText: response.statusText,
-                            headers: response.headers
-                        });
-                    } catch (_) {
-                        return response;
-                    }
-                };
-                """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        )
-        config.userContentController.addUserScript(nativeShellScript)
         let prefs = WKPreferences()
         prefs.setValue(true, forKey: "javaScriptCanAccessClipboard")
         prefs.setValue(true, forKey: "DOMPasteAllowed")
@@ -1171,20 +1124,6 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        handleNavigationFailure(error)
-    }
-
-    // A response can arrive successfully and fail later while WebKit commits
-    // or renders it.  Treat that the same as a provisional failure; otherwise
-    // the window can remain on the WebUI's loading placeholder indefinitely.
-    func webView(
-        _ webView: WKWebView, didFail navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        handleNavigationFailure(error)
-    }
-
-    private func handleNavigationFailure(_ error: Error) {
         // Fix #52: ensure the window is visible before we close/replace it.
         // If the very first navigation fails, didFinishNavigation never fires,
         // so the window stays at alphaValue=0. Restore it so the error window
@@ -1199,17 +1138,6 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         guard !didReportNavigationFailure else { return }
         didReportNavigationFailure = true
         onNavigationFailed?()
-    }
-
-    // WKWebView runs page JavaScript in a separate process.  A large transcript
-    // or a WebKit rendering fault can terminate that process without invoking
-    // either navigation-failure callback, leaving the last DOM (often
-    // "Loading conversation…") frozen in place.  Recreate the page in place;
-    // the existing WKWebView keeps cookies and local storage.
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        NSLog("HermesAgent: WKWebView content process terminated; reloading")
-        didReportNavigationFailure = false
-        webView.reload()
     }
 
     // Server reachable but returned 5xx — the network preflight can't catch
