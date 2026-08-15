@@ -265,7 +265,21 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // OS-specific Safari user-agent string.  WKWebView has a smaller and
         // slower rendering budget than desktop Safari for large transcripts.
         let nativeShellScript = WKUserScript(
-            source: "window.__HERMES_NATIVE_MAC__ = true;",
+            source: """
+                window.__HERMES_NATIVE_MAC__ = true;
+                try {
+                    const inflightKey = 'hermes-webui-inflight-state';
+                    const inflight = localStorage.getItem(inflightKey);
+                    // A very large replay cache can pin WKWebView's content
+                    // process before the conversation list becomes interactive.
+                    // Avoid immediately reopening that same transcript; the
+                    // canonical conversation remains stored on the server.
+                    if (inflight && inflight.length > 500000) {
+                        localStorage.removeItem(inflightKey);
+                        localStorage.removeItem('hermes-webui-session');
+                    }
+                } catch (_) {}
+                """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
