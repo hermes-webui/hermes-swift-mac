@@ -260,11 +260,38 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         let bounds = contentView.bounds
         let statusBarHeight: CGFloat = connectionMode == "ssh" ? 28 : 0
 
+        // Register custom URLProtocol to inject HTTP headers on every request
+        URLProtocol.registerClass(CustomHeaderURLProtocol.self)
+
         let config = WKWebViewConfiguration()
         let prefs = WKPreferences()
         prefs.setValue(true, forKey: "javaScriptCanAccessClipboard")
         prefs.setValue(true, forKey: "DOMPasteAllowed")
         config.preferences = prefs
+
+        // Inject custom headers as a meta tag so JavaScript can read them if needed.
+        // The primary mechanism is URLProtocol for HTTP requests; the CF_AppSession
+        // cookie set by Cloudflare Access on the initial authenticated request will
+        // be sent automatically with WebSocket connections by WKWebView.
+        let customHeaders = CustomHeaderURLProtocol.loadCustomHeaders()
+        if !customHeaders.isEmpty {
+            let headersJSON = try? JSONSerialization.data(withJSONObject: customHeaders.map { ["name": $0.name, "value": $0.value] })
+            let headersStr = headersJSON.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            let headerMetaScript = WKUserScript(
+                source: """
+                    (function() {
+                        const meta = document.createElement('meta');
+                        meta.name = 'hermes-custom-headers';
+                        meta.content = '\(headersStr.replacingOccurrences(of: "'", with: "\\'"))';
+                        document.head.appendChild(meta);
+                    })();
+                    """,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            config.userContentController.addUserScript(headerMetaScript)
+        }
+
         let pasteScript = WKUserScript(
             source:
                 "document.addEventListener('paste', function(e) { e.stopImmediatePropagation(); }, true);",

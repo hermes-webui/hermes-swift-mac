@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Custom HTTP headers for Cloudflare Access & reverse-proxy auth — PR #100** — new CUSTOM HEADERS section in Preferences lets users configure `Name: Value` header pairs that get injected into every WKWebView request via a URLProtocol subclass. Enables the desktop app to authenticate behind Cloudflare Access (and similar edge-auth gateways) using service tokens without a browser OTP flow. Contributed by @timerealm.
+
 ## [v1.7.3] — 2026-07-18
 
 ### Fixed

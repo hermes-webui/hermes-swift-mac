@@ -23,10 +23,12 @@ class PreferencesWindowController: NSWindowController {
     private var pendingHotkeyKeyCode: UInt32?
     private var pendingHotkeyModifiers: UInt32?
     private var pendingHotkeyEnabled: Bool?
+/// Multi-line text view for custom HTTP headers (e.g. Cloudflare Access service token headers).
+private var headersTextView: NSTextView!
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 628),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 748),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -152,6 +154,47 @@ class PreferencesWindowController: NSWindowController {
         // Connection result; the local port also drives the tunnel-URL label.
         [usernameField, hostField, localPortField, remotePortField, targetURLField]
             .forEach { $0?.delegate = self }
+
+        // ── Custom Headers section ──
+        _ = divider()
+        y -= 4  // Extra spacing before section header
+        _ = sectionHeader("CUSTOM HEADERS")
+        y -= 4  // Extra spacing after header
+
+        let headerLabel = NSTextField(labelWithString: "Headers (one per line: Name: Value)")
+        headerLabel.font = NSFont.systemFont(ofSize: 11)
+        headerLabel.textColor = .secondaryLabelColor
+        headerLabel.frame = NSRect(x: 164, y: y, width: 300, height: 16)
+        content.addSubview(headerLabel)
+        y -= 20
+
+        let scrollView = NSScrollView(frame: NSRect(x: 164, y: y - 72, width: 300, height: 72))
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 284, height: 72))
+        textView.font = NSFont(name: "Menlo", size: 11) ?? NSFont.systemFont(ofSize: 11)
+        textView.isRichText = false
+        textView.autoresizingMask = [.width]
+        textView.drawsBackground = false
+        // Load existing headers
+        let savedHeaders = CustomHeaderURLProtocol.loadCustomHeaders()
+        if !savedHeaders.isEmpty {
+            textView.string = savedHeaders.map { "\($0.name): \($0.value)" }.joined(separator: "\n")
+        }
+        scrollView.documentView = textView
+        content.addSubview(scrollView)
+        headersTextView = textView
+
+        // Note about headers
+        let headerNote = NSTextField(labelWithString: "Sent with every request. For Cloudflare Access, use:\nCF-Access-Client-Id and CF-Access-Client-Secret")
+        headerNote.font = NSFont.systemFont(ofSize: 10)
+        headerNote.textColor = .tertiaryLabelColor
+        headerNote.frame = NSRect(x: 164, y: y - 110, width: 300, height: 30)
+        content.addSubview(headerNote)
+        y -= 118
 
         // Fix #41: configurable global shortcut — replaced static label with recorder.
         let shortcutLabel = NSTextField(labelWithString: "Global shortcut:")
@@ -381,6 +424,21 @@ class PreferencesWindowController: NSWindowController {
         if let kc = pendingHotkeyKeyCode   { UserDefaults.standard.set(Int(kc), forKey: "globalHotkeyKeyCode") }
         if let m  = pendingHotkeyModifiers  { UserDefaults.standard.set(Int(m),  forKey: "globalHotkeyModifiers") }
         if let en = pendingHotkeyEnabled    { UserDefaults.standard.set(en, forKey: "globalHotkeyEnabled") }
+
+        // Persist custom headers from the text view
+        let headerLines = headersTextView.string
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        let parsedHeaders: [(name: String, value: String)] = headerLines.compactMap { line in
+            guard let colonIndex = line.firstIndex(of: ":") else { return nil }
+            let name = String(line[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+            let value = String(line[colonIndex...].dropFirst()).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { return nil }
+            return (name, value)
+        }
+        CustomHeaderURLProtocol.saveCustomHeaders(parsedHeaders)
+
         close()
         onSave?()
     }
