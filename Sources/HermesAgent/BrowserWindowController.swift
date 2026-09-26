@@ -78,9 +78,10 @@ private class TitleBarDragView: NSView {
 class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     /// WKWebView-only compatibility guard for the upstream transcript-virtualization
-    /// retry loop (hermes-webui PR #6668). The affected WebUI scheduler resets its
-    /// retry budget whenever WebKit's measured virtual window changes, so alternating
-    /// measurements can schedule layout work forever on long conversations.
+    /// retry loop (hermes-webui issue #6654, fixed upstream by PR #6717). The
+    /// affected WebUI scheduler resets its retry budget whenever WebKit's measured
+    /// virtual window changes, so alternating measurements can schedule layout
+    /// work forever on long conversations.
     ///
     /// WebUI already provides `_virtualizeTranscript === false` as its supported
     /// non-virtualized path. This document-start accessor remembers the server's
@@ -95,6 +96,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
             const functionToString = Function.prototype.toString;
             let requestedValue = window._virtualizeTranscript === true;
+            // The transcript reads this flag on every scroll event, so classify
+            // each scheduler function once instead of re-scanning its source.
+            let classifiedScheduler = null;
+            let classifiedSchedulerIsFixed = false;
 
             Object.defineProperty(window, marker, {
                 value: true,
@@ -108,11 +113,16 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
                     if (!requestedValue) return false;
                     const scheduler = window._scheduleMessageVirtualMeasurementRefresh;
                     if (typeof scheduler !== 'function') return false;
-                    const source = functionToString.call(scheduler);
-                    const compactSource = Array.from(source)
-                        .filter(function(character) { return character.charCodeAt(0) > 32; })
-                        .join('');
-                    return !compactSource.includes('_messageVirtualMeasurementRetryCount=0');
+                    if (scheduler !== classifiedScheduler) {
+                        const source = functionToString.call(scheduler);
+                        const compactSource = Array.from(source)
+                            .filter(function(character) { return character.charCodeAt(0) > 32; })
+                            .join('');
+                        classifiedSchedulerIsFixed =
+                            !compactSource.includes('_messageVirtualMeasurementRetryCount=0');
+                        classifiedScheduler = scheduler;
+                    }
+                    return classifiedSchedulerIsFixed;
                 },
                 set: function(value) {
                     requestedValue = value === true;

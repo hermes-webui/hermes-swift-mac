@@ -37,12 +37,16 @@ final class LongConversationCompatibilityTests: XCTestCase {
     private func context(
         schedulerBody: String?,
         requestedValue: Bool,
-        installTwice: Bool = false
+        installTwice: Bool = false,
+        prelude: String? = nil
     ) throws -> JSContext {
         let context = try XCTUnwrap(JSContext())
         var exception: JSValue?
         context.exceptionHandler = { _, value in exception = value }
         context.evaluateScript("var window = this;")
+        if let prelude {
+            context.evaluateScript(prelude)
+        }
 
         let script = try productionScript()
         context.evaluateScript(script)
@@ -104,5 +108,51 @@ final class LongConversationCompatibilityTests: XCTestCase {
         XCTAssertTrue(
             context.evaluateScript("window.__hermesMacLongConversationCompatibilityPatch").toBool()
         )
+    }
+
+    /// Counts source reads made through the `Function.prototype.toString` the
+    /// production script captures at install time.
+    private let toStringCounterPrelude = """
+        var __schedulerSourceReads = 0;
+        var __originalFunctionToString = Function.prototype.toString;
+        Function.prototype.toString = function() {
+            __schedulerSourceReads += 1;
+            return __originalFunctionToString.call(this);
+        };
+        """
+
+    func testSchedulerSourceIsClassifiedOnceAcrossRepeatedReads() throws {
+        let context = try context(
+            schedulerBody: "_messageVirtualMeasurementCycleKey=cycleKey;",
+            requestedValue: true,
+            prelude: toStringCounterPrelude
+        )
+
+        let allTrue = context.evaluateScript("""
+            (function() {
+                for (var i = 0; i < 50; i++) {
+                    if (window._virtualizeTranscript !== true) return false;
+                }
+                return true;
+            })()
+            """)
+        XCTAssertTrue(allTrue?.toBool() ?? false)
+        XCTAssertEqual(context.evaluateScript("__schedulerSourceReads").toInt32(), 1)
+    }
+
+    func testReplacedSchedulerIsReclassified() throws {
+        let context = try context(
+            schedulerBody: "_messageVirtualMeasurementRetryCount = 0;",
+            requestedValue: true,
+            prelude: toStringCounterPrelude
+        )
+
+        XCTAssertFalse(context.evaluateScript("window._virtualizeTranscript").toBool())
+        XCTAssertFalse(context.evaluateScript("window._virtualizeTranscript").toBool())
+        context.evaluateScript(
+            "window._scheduleMessageVirtualMeasurementRefresh = function() { _messageVirtualMeasurementCycleKey=cycleKey; };"
+        )
+        XCTAssertTrue(context.evaluateScript("window._virtualizeTranscript").toBool())
+        XCTAssertEqual(context.evaluateScript("__schedulerSourceReads").toInt32(), 2)
     }
 }
