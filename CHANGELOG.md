@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Long conversations no longer enter WebKit's virtual-measurement retry loop** — the macOS client now installs a document-start compatibility guard for the upstream transcript-virtualization bug tracked by hermes-webui issue #6654 (fixed upstream by PR #6717, first shipped in `exp-v0.52.374`). When the loaded scheduler still contains the faulty per-window retry reset, virtualization uses WebUI's supported non-virtualized fallback inside WKWebView only. Browser and iOS clients remain unchanged, and virtualization automatically resumes in the Mac client once the server supplies the corrected scheduler.
+
 ## [v1.7.3] — 2026-07-18
 
 ### Fixed
