@@ -11,16 +11,22 @@ let package = Package(
         ),
     ],
     targets: [
+        // WebKit-free policy so `swift test` exercises the real type, not a copy.
+        .target(
+            name: "HermesAgentCore",
+            path: "Sources/HermesAgentCore"
+        ),
         .executableTarget(
             name: "HermesAgent",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
+                "HermesAgentCore",
             ],
             path: "Sources/HermesAgent"
         ),
         .testTarget(
             name: "HermesAgentTests",
-            dependencies: [],
+            dependencies: ["HermesAgentCore"],
             path: "Tests/HermesAgentTests"
         ),
     ]

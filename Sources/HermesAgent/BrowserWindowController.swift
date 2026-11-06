@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import HermesAgentCore
 import UserNotifications
 import WebKit
 
@@ -136,7 +137,7 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
 
     /// Exposes the WKWebView for zoom operations called from AppDelegate menu actions.
     /// Return type is WKWebView (not the private HermesWebView subclass) so Swift's
-    /// access-level rules are satisfied — callers only need .magnification anyway.
+    /// access-level rules are satisfied — callers only need `.pageZoom` anyway.
     var webViewForZoom: WKWebView? { webView }
     private var separator: NSView!
     private var statusDot: NSView!
@@ -201,6 +202,8 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
     /// (i.e. the active conversation's name in hermes-webui) into window.title,
     /// which is what AppKit shows on the tab.
     private var pageTitleObservation: NSKeyValueObservation?
+
+    private let zoomPreferences = ZoomPreferences()
 
     /// - Parameter useFrameAutosave: When true (default), the window persists its
     ///   frame to UserDefaults under HermesMainWindow. Only the *first* window of a
@@ -584,7 +587,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         webView.autoresizingMask = [.width, .height]
         webView.uiDelegate = self
         webView.navigationDelegate = self
-        webView.allowsMagnification = true
+        // Magnification scales a fixed layout and composes with pageZoom.
+        webView.allowsMagnification = false
+        // Apply the saved zoom before the first paint (fix #43).
+        webView.pageZoom = CGFloat(zoomPreferences.load().factor)
 
         // Mirror document.title into window.title so the AppKit tab shows
         // the active conversation name (truncated). KVO fires on every page
@@ -1147,11 +1153,10 @@ class BrowserWindowController: NSWindowController, NSWindowDelegate, WKUIDelegat
         // Fix #57: refine traffic light clearance to exact measured value.
         injectTrafficLightWidthVar()
 
-        // Restore persisted zoom level. double(forKey:) returns 0.0 when unset —
-        // treat any value outside the valid zoom range as "no preference".
-        let saved = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
-        if saved >= 0.5 && saved <= 3.0 {
-            webView.magnification = saved
+        // A recreated WebContent process starts at 100%; re-assert the saved zoom.
+        let persistedZoom = CGFloat(zoomPreferences.load().factor)
+        if webView.pageZoom != persistedZoom {
+            webView.pageZoom = persistedZoom
         }
 
         // Apply tabbed-mode titlebar class on first paint and SPA navigations —
