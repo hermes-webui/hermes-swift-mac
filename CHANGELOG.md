@@ -3,7 +3,11 @@
 ## [Unreleased]
 
 ### Fixed
+- **Zoom (⌘+/⌘−/⌘0) now reflows the page instead of scaling a fixed layout** — the View menu drove `WKWebView.magnification`, the scroll-view scale also used by pinch gestures. That enlarges an already-laid-out page inside a viewport that keeps its pre-zoom size, so nothing re-lays-out: zooming in pushed the composer below the window, and zooming out left the scaled page sitting top-left with unused gutters on the right and bottom. Zoom now goes through `WKWebView.pageZoom`, which changes the CSS viewport, so text re-wraps and flex/grid layouts rearrange the way ⌘+/⌘− does in Safari. Steps stay at 0.1 across the 0.5–3.0 range but are quantized onto a 0.1 grid (no float drift), the level still persists across launches, and an existing `webViewMagnification` value is migrated on first read (new key: `webViewPageZoom`). The policy lives in `HermesAgentCore.ZoomLevel` and is covered by `swift test`.
 - **Long conversations no longer enter WebKit's virtual-measurement retry loop** — the macOS client now installs a document-start compatibility guard for the upstream transcript-virtualization bug tracked by hermes-webui issue #6654 (fixed upstream by PR #6717, first shipped in `exp-v0.52.374`). When the loaded scheduler still contains the faulty per-window retry reset, virtualization uses WebUI's supported non-virtualized fallback inside WKWebView only. Browser and iOS clients remain unchanged, and virtualization automatically resumes in the Mac client once the server supplies the corrected scheduler.
+
+### Changed
+- **Pinch-to-zoom no longer magnifies** — the trackpad pinch gesture is WebKit's scroll-view magnification, i.e. the same non-reflowing path as the zoom bug above, and it composes multiplicatively with page zoom (so a pinch could leave ⌘0 not actually at 100%). `allowsMagnification` is now disabled and ⌘+/⌘−/⌘0 is the single zoom mechanism. Mapping pinch onto page-zoom steps is a possible follow-up for users who rely on the gesture.
 
 ## [v1.7.3] — 2026-07-18
 

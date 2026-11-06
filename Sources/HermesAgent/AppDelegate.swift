@@ -1,6 +1,7 @@
 import AVFoundation
 import Carbon.HIToolbox
 import Cocoa
+import HermesAgentCore
 import Network
 import Sparkle
 
@@ -851,23 +852,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - View zoom (fix #24, #43 — zoom level persisted)
 
-    static let zoomKey = "webViewMagnification"
+    private let zoomPreferences = ZoomPreferences()
+
+    /// Applies the zoom to the front-most browser window (see `ZoomLevel`).
+    private func applyZoom(_ level: ZoomLevel) {
+        guard let webView = keyBrowserWindow?.webViewForZoom else { return }
+        webView.pageZoom = CGFloat(level.factor)
+        zoomPreferences.save(level)
+    }
+
+    /// Read from the live web view so each window continues from its own value.
+    private func currentZoom() -> ZoomLevel {
+        guard let webView = keyBrowserWindow?.webViewForZoom else {
+            return zoomPreferences.load()
+        }
+        return ZoomLevel(clamping: Double(webView.pageZoom))
+    }
 
     @objc func zoomIn() {
-        guard let webView = keyBrowserWindow?.webViewForZoom else { return }
-        webView.magnification = min(webView.magnification + 0.1, 3.0)
-        UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
+        applyZoom(currentZoom().increased())
     }
 
     @objc func zoomOut() {
-        guard let webView = keyBrowserWindow?.webViewForZoom else { return }
-        webView.magnification = max(webView.magnification - 0.1, 0.5)
-        UserDefaults.standard.set(webView.magnification, forKey: Self.zoomKey)
+        applyZoom(currentZoom().decreased())
     }
 
     @objc func zoomReset() {
-        keyBrowserWindow?.webViewForZoom?.magnification = 1.0
-        UserDefaults.standard.set(1.0, forKey: Self.zoomKey)
+        applyZoom(.identity)
     }
 
     @objc func openPreferences() {

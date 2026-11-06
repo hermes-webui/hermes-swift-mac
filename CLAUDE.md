@@ -29,11 +29,15 @@ Sources/HermesAgent/
   TunnelManager.swift             # Optional SSH tunnel (Process-based)
   main.swift                      # Entry point
 
+Sources/HermesAgentCore/
+  ZoomLevel.swift                 # Page-zoom policy + persistence (no WebKit, unit-tested)
+
 Tests/HermesAgentTests/
   ValidationTests.swift           # URL validation, preference parsing tests
+  ZoomLevelTests.swift            # Zoom steps/clamping + zoom persistence migration
 
 build.sh          # Local build — generates Info.plist heredoc, signs ad-hoc
-Package.swift     # SPM — depends on Sparkle 2 only
+Package.swift     # SPM — Sparkle 2 + the HermesAgentCore target
 Entitlements.plist  # No sandbox — ad-hoc signed
 appcast.xml       # Sparkle update feed (hosted on GitHub Pages)
 CHANGELOG.md      # One entry per release — update before every tag
